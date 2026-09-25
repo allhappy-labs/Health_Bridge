@@ -1,0 +1,37 @@
+{
+  "request_type": "archive_batch",
+  "protocol_version": 2,
+  "request_id": "request-batch-001",
+  "user_id": "person-1",
+  "batch_id": "batch-001",
+  "sample_type": "HKQuantityTypeIdentifierStepCount",
+  "coverage": {
+    "kind": "interval",
+    "start": "2024-01-01T00:00:00Z",
+    "end": "2024-01-02T00:00:00Z",
+    "authorization_start": "2023-01-01T00:00:00Z"
+  },
+  "samples": [
+    {
+      "uuid": "bd085ccc-22f4-4e80-a865-149bb5b0d1d4",
+      "start": "2024-01-01T10:00:00Z",
+      "end": "2024-01-01T10:00:01Z",
+      "source": {
+        "bundle_id": "com.example.watch",
+        "name": "Example Watch",
+        "revision": "1.0"
+      },
+      "time_zone": "Europe/Zurich",
+      "metadata": {"HKMetadataKeyWasUserEntered": false},
+      "payload": {
+        "kind": "quantity",
+        "schema_version": 1,
+        "raw_value": 12,
+        "raw_unit": "count",
+        "canonical_value": 12,
+        "canonical_unit": "count"
+      }
+    }
+  ],
+  "deletions": []
+}

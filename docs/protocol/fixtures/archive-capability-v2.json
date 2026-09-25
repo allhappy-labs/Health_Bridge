@@ -1,0 +1,26 @@
+{
+  "request": {
+    "request_type": "archive_capability",
+    "protocol_version": 2,
+    "request_id": "request-capability-001",
+    "user_id": "person-1"
+  },
+  "response": {
+    "ok": true,
+    "request_type": "archive_capability",
+    "protocol_version": 2,
+    "request_id": "request-capability-001",
+    "archive_schema_version": 1,
+    "max_batch_bytes": 262144,
+    "max_samples_per_batch": 200,
+    "max_deletions_per_batch": 200,
+    "supported_sample_types": [
+      "HKQuantityTypeIdentifierStepCount",
+      "HKCategoryTypeIdentifierSleepAnalysis",
+      "HKWorkoutTypeIdentifier"
+    ],
+    "supported_metrics": ["steps", "sleep_details", "last_apple_workout"],
+    "archive_available": true,
+    "statistics_available": true
+  }
+}

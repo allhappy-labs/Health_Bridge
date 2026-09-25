@@ -1,0 +1,18 @@
+{
+  "request": {
+    "request_type": "archive_status",
+    "protocol_version": 2,
+    "request_id": "request-status-001",
+    "user_id": "person-1"
+  },
+  "response": {
+    "ok": true,
+    "request_type": "archive_status",
+    "protocol_version": 2,
+    "request_id": "request-status-001",
+    "metrics": [
+      {"metric": "steps", "state": "pending", "last_error": null},
+      {"metric": "sleep_details", "state": "current", "last_error": null}
+    ]
+  }
+}

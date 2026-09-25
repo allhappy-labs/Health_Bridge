@@ -2,12 +2,15 @@
 
 Version 2 is a separate, capability-advertised Health Assistant Link webhook
 contract. It does not change live or backfill protocol v1, its 14-day limit, or
-the existing Phone Assistant Link route. Authenticate the Health Assistant Link
-token and bind the request to its Health Bridge `user_id` before calling
-`validate_archive_request(payload, limits=ArchiveLimits(...))`. A `token` may be
-present in the authenticated envelope; the parser discards it. This document
-freezes the JSON shapes for the iOS importer. Storage and route behavior are
-implemented by subsequent tasks.
+the existing Phone Assistant Link route. Authenticate a registered Health
+Assistant Link entry's token before calling
+`validate_archive_request(payload, limits=ArchiveLimits(...))`. An entry with
+an explicit `user_id` rejects requests for other users. Existing entries without
+that setting retain their declared Health Bridge user namespace: the shared HAL
+token authorizes all of that integration's users and is **not per-user
+isolation**. Phone tokens and the untyped legacy YAML token cannot use archive
+routes. A `token` may be present in the authenticated envelope; the parser
+discards it. This document freezes the JSON shapes for the iOS importer.
 
 The four canonical fixtures are in [`fixtures/`](fixtures/). The capability and
 status fixtures contain one request and one response. The batch fixture is an
@@ -30,8 +33,12 @@ type identifier (`HKQuantityTypeIdentifier…`, `HKCategoryTypeIdentifier…`) o
 `HKWorkoutTypeIdentifier`. A batch contains one type only. The type must also
 be in the authenticated server's advertised supported types. A batch has at
 least one sample or deletion, at most 200 of each, and at most 262,144 bytes of
-compact UTF-8 JSON. The route should also enforce the same limit on the raw
-HTTP body before decoding; the parser caps normalized JSON. Each UUID is a
+compact UTF-8 JSON. On the shared JSON-token webhook, Home Assistant's existing
+raw HTTP body ceiling applies before decoding, including chunked requests.
+After the envelope is decoded and authenticated, archive requests additionally
+enforce the 262,144-byte raw body ceiling before schema parsing or mutation;
+whitespace counts. This preserves v1's existing HTTP limit. The parser also
+caps normalized JSON. Each UUID is a
 canonical 36-character UUID, unique across samples and deletions in one batch.
 The archive's durable key is `(user_id, sample_type, uuid)`, so separate
 same-time samples remain distinct. Retrying the same `batch_id` returns its
@@ -85,6 +92,25 @@ the fixture's three entries illustrate the shape and do not claim complete
 support for all 111 live metric keys. Advertised limits may be lower than the
 protocol ceilings of 262,144 bytes, 200 samples, and 200 deletions, but never
 higher.
+
+The initial route registry accepts direct step-count, heart-rate, sleep-analysis,
+and workout originals, associated with `steps`, `heart_rate`, `sleep_details`,
+and `last_apple_workout`. This deliberately small registry expands with audited
+projection rules. `statistics_available` remains false until a working
+statistics writer is integrated. Until that worker confirms statistics readback,
+public acknowledgement and status projection states remain `pending` (or
+`failed` for recorded errors), even when the outbox is empty. The SQLite archive lives at
+`.storage/health_bridge_archive.sqlite`, separately from recorder. Store opening,
+commits, and status reads run in Home Assistant's executor. An unavailable store
+does not prevent live integration setup; capability advertises
+`archive_available: false`, and upload/status return HTTP 503.
+
+Uploads are limited to 60 requests per minute per authenticated config entry;
+capability/status share an independent 120-request budget so an import cannot
+consume its status budget. HTTP 429 includes `Retry-After`. Invalid schemas and
+unsupported types return 422, byte/count violations return 413, conflicting
+reuse of a batch ID returns 409, and storage failures return 503 without a
+commit acknowledgement. Rate windows are process-local and reset on restart.
 
 A successful batch acknowledgement has `ok: true`,
 `archive_commit: "committed"`, `protocol_version: 2`, echoed `request_id` and

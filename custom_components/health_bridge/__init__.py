@@ -23,6 +23,14 @@ from homeassistant.helpers.storage import Store
 from homeassistant.config_entries import ConfigEntry
 
 from .const import DOMAIN, METRIC_ATTRIBUTES_MAP
+from .archive_webhook import (
+    ARCHIVE_LIMITS,
+    ARCHIVE_REQUEST_TYPES,
+    archive_error,
+    archive_rate_limit,
+    async_handle_archive_request,
+    async_setup_archive,
+)
 from .history_backfill import (
     BACKFILL_PROTOCOL_VERSION,
     BackfillCompatibilityError,
@@ -645,11 +653,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN].setdefault("entry_tokens", {})[entry.entry_id] = {
         "app_type": app_type,
         "token": entry.data[CONF_TOKEN],
+        "user_id": entry.data.get("user_id"),
     }
     hass.data[DOMAIN].setdefault("entry_ids", {})[app_type] = entry.entry_id
     # Keep the legacy key HAL-only. Phone Bridge must never overwrite it.
     if app_type == "health_assistant_link":
         hass.data[DOMAIN]["entry_id"] = entry.entry_id
+        await async_setup_archive(hass)
     hass.data[DOMAIN].setdefault("entities", {})
     await _load_integration_version(hass)
 
@@ -841,13 +851,27 @@ async def async_remove_config_entry_device(
 
 # --- Webhook ------------------------------------------------------------------
 
+def _tokens_match(received: str, candidate: str) -> bool:
+    """Compare JSON strings without non-ASCII input crashing authentication."""
+    return hmac.compare_digest(
+        received.encode("utf-8", "surrogatepass"),
+        candidate.encode("utf-8", "surrogatepass"),
+    )
+
+
 def _setup_webhook(hass: HomeAssistant) -> None:
     if hass.data.get(DOMAIN, {}).get("webhook_registered"):
         return
 
     async def handle_webhook(hass: HomeAssistant, webhook_id: str, request):
         try:
+            # aiohttp bounds raw bytes (including chunked requests) at HA's
+            # existing HTTP ceiling before JSON decoding. Keep that v1 limit;
+            # archive's tighter raw limit follows envelope authentication.
+            raw_body = await request.read()
             data = await request.json()
+        except web.HTTPRequestEntityTooLarge:
+            return archive_error("limit_exceeded", 413)
         except Exception as exc:
             _LOGGER.error("Health Bridge: Webhook JSON parse error: %s", exc, exc_info=True)
             return None
@@ -886,7 +910,7 @@ def _setup_webhook(hass: HomeAssistant) -> None:
         # configured (can't authenticate) or the token doesn't match, and
         # return HTTP 401 so the client sees a real failure instead of a 200.
         authenticated = bool(received_norm) and any(
-            hmac.compare_digest(received_norm, candidate)
+            _tokens_match(received_norm, candidate)
             for candidate in accepted_tokens
         )
         if not authenticated:
@@ -923,6 +947,31 @@ def _setup_webhook(hass: HomeAssistant) -> None:
 
         # A successful request clears stale failures for that source.
         domain_data.get("auth_failures", {}).pop(request.remote or "unknown", None)
+
+        if isinstance(request_type, str) and request_type in ARCHIVE_REQUEST_TYPES:
+            # A YAML fallback is not an app-specific HAL credential. Match
+            # an actual registered entry, and fail closed for ambiguous tokens.
+            matching_entries = [
+                (entry_id, item)
+                for entry_id, item in configured_tokens.items()
+                if item.get("app_type", "health_assistant_link") == "health_assistant_link"
+                and isinstance(item.get("token"), str)
+                and _tokens_match(received_norm, item["token"].strip())
+            ]
+            if len(matching_entries) != 1:
+                return archive_error("invalid_token", 401)
+            entry_id, authenticated_entry = matching_entries[0]
+            bound_user = authenticated_entry.get("user_id")
+            if bound_user is not None and user_id != bound_user:
+                return archive_error("user_mismatch", 403)
+            if len(raw_body) > ARCHIVE_LIMITS.max_batch_bytes:
+                return archive_error("limit_exceeded", 413)
+            limited = archive_rate_limit(hass, entry_id, request_type)
+            if limited is not None:
+                return limited
+            return await async_handle_archive_request(
+                hass, data, domain_data.get("archive_store")
+            )
 
         if request_type == "phone_assistant_link":
             # PAL is an additive protocol on the shared authenticated webhook.

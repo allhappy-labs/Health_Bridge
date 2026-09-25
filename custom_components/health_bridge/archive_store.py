@@ -488,6 +488,36 @@ class ArchiveStore:
                 )
         return tuple(jobs)
 
+    def projection_status(self, user_id: str) -> dict[str, tuple[str, str | None]]:
+        """Read per-type outbox state without claiming or modifying jobs.
+
+        Only imported types appear. Failed work takes precedence over pending
+        work; a type becomes current only when all of its jobs are completed.
+        """
+        _executor_only()
+        if not isinstance(user_id, str) or not _ID.fullmatch(user_id):
+            raise ArchiveStoreError("invalid_user")
+        with self._connection() as db:
+            rows = db.execute(
+                """SELECT coverage.sample_type,
+                    MAX(CASE WHEN jobs.state='failed' THEN 2
+                             WHEN jobs.state IS NOT NULL THEN 1 ELSE 0 END) AS priority,
+                    MIN(CASE WHEN jobs.state='failed' THEN jobs.last_error END) AS error
+                FROM (SELECT DISTINCT sample_type FROM coverage_intervals
+                      WHERE user_id=?) AS coverage
+                LEFT JOIN projection_jobs AS jobs
+                  ON jobs.sample_type=coverage.sample_type AND jobs.user_id=?
+                GROUP BY coverage.sample_type""",
+                (user_id, user_id),
+            ).fetchall()
+        return {
+            row["sample_type"]: (
+                ("current", "pending", "failed")[row["priority"]],
+                row["error"],
+            )
+            for row in rows
+        }
+
     def complete_projection_job(self, job_id: str) -> None:
         with self._connection() as db:
             db.execute(

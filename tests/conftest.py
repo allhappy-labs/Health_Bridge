@@ -10,6 +10,12 @@ PAL_TOKEN = "phone-assistant-compatibility-token-000001"
 
 
 @pytest.fixture
+def hass_config_dir(tmp_path):
+    """Keep the real archive database isolated for each HA lifecycle test."""
+    return str(tmp_path)
+
+
+@pytest.fixture
 async def bridge_entries(hass, enable_custom_integrations):
     """Load both real config entries through Home Assistant's setup path."""
     entries = []

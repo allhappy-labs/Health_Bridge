@@ -19,6 +19,9 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 ARCHIVE_PROTOCOL_VERSION = 2
 ARCHIVE_SCHEMA_VERSION = 1
 PAYLOAD_SCHEMA_VERSION = 1
+MAX_ARCHIVE_BATCH_BYTES = 262_144
+MAX_ARCHIVE_SAMPLES_PER_BATCH = 200
+MAX_ARCHIVE_DELETIONS_PER_BATCH = 200
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
 _TYPE = re.compile(r"HK(?:Quantity|Category)TypeIdentifier[A-Za-z0-9]{1,96}\Z")
 _UTC = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z\Z")
@@ -37,12 +40,22 @@ class ArchiveProtocolError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class ArchiveLimits:
-    max_batch_bytes: int = 262_144
-    max_samples_per_batch: int = 200
-    max_deletions_per_batch: int = 200
+    max_batch_bytes: int = MAX_ARCHIVE_BATCH_BYTES
+    max_samples_per_batch: int = MAX_ARCHIVE_SAMPLES_PER_BATCH
+    max_deletions_per_batch: int = MAX_ARCHIVE_DELETIONS_PER_BATCH
     max_metadata_bytes: int = 8_192
     max_string_length: int = 256
     max_anchor_length: int = 4_096
+
+    def __post_init__(self) -> None:
+        for field, ceiling in (
+            ("max_batch_bytes", MAX_ARCHIVE_BATCH_BYTES),
+            ("max_samples_per_batch", MAX_ARCHIVE_SAMPLES_PER_BATCH),
+            ("max_deletions_per_batch", MAX_ARCHIVE_DELETIONS_PER_BATCH),
+        ):
+            value = getattr(self, field)
+            if type(value) is not int or value > ceiling:
+                raise ArchiveProtocolError("limit_exceeded", field)
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,12 +184,18 @@ class ArchiveCapability:
             archive_schema_version=_positive_int(
                 obj["archive_schema_version"], "archive_schema_version"
             ),
-            max_batch_bytes=_positive_int(obj["max_batch_bytes"], "max_batch_bytes"),
+            max_batch_bytes=_positive_int(
+                obj["max_batch_bytes"], "max_batch_bytes", MAX_ARCHIVE_BATCH_BYTES
+            ),
             max_samples_per_batch=_positive_int(
-                obj["max_samples_per_batch"], "max_samples_per_batch"
+                obj["max_samples_per_batch"],
+                "max_samples_per_batch",
+                MAX_ARCHIVE_SAMPLES_PER_BATCH,
             ),
             max_deletions_per_batch=_positive_int(
-                obj["max_deletions_per_batch"], "max_deletions_per_batch"
+                obj["max_deletions_per_batch"],
+                "max_deletions_per_batch",
+                MAX_ARCHIVE_DELETIONS_PER_BATCH,
             ),
             supported_sample_types=sample_types,
             supported_metrics=metrics,
@@ -240,12 +259,12 @@ class ArchiveReceipt:
         ):
             raise ArchiveProtocolError("invalid_response", "ack")
         counts = tuple(
-            _nonnegative_int(obj[key], key)
-            for key in (
-                "received_samples",
-                "committed_samples",
-                "received_deletions",
-                "committed_deletions",
+            _nonnegative_int(obj[key], key, ceiling)
+            for key, ceiling in (
+                ("received_samples", MAX_ARCHIVE_SAMPLES_PER_BATCH),
+                ("committed_samples", MAX_ARCHIVE_SAMPLES_PER_BATCH),
+                ("received_deletions", MAX_ARCHIVE_DELETIONS_PER_BATCH),
+                ("committed_deletions", MAX_ARCHIVE_DELETIONS_PER_BATCH),
             )
         )
         if counts[1] > counts[0] or counts[3] > counts[2]:
@@ -712,14 +731,18 @@ def _response_header(obj: dict[str, Any], request_type: str) -> None:
         raise ArchiveProtocolError("invalid_response", request_type)
 
 
-def _positive_int(value: Any, field: str) -> int:
-    if type(value) is not int or value <= 0:
+def _positive_int(value: Any, field: str, ceiling: int | None = None) -> int:
+    if (
+        type(value) is not int
+        or value <= 0
+        or (ceiling is not None and value > ceiling)
+    ):
         raise ArchiveProtocolError("invalid_response", field)
     return value
 
 
-def _nonnegative_int(value: Any, field: str) -> int:
-    if type(value) is not int or value < 0:
+def _nonnegative_int(value: Any, field: str, ceiling: int) -> int:
+    if type(value) is not int or value < 0 or value > ceiling:
         raise ArchiveProtocolError("invalid_response", field)
     return value
 

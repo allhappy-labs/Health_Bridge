@@ -82,14 +82,17 @@ Capability responds with `ok`, `request_type`, `protocol_version`, echoed
 metric keys, and separate `archive_available` and `statistics_available`
 booleans. The installed fork must populate the lists from its audited mapping;
 the fixture's three entries illustrate the shape and do not claim complete
-support for all 111 live metric keys.
+support for all 111 live metric keys. Advertised limits may be lower than the
+protocol ceilings of 262,144 bytes, 200 samples, and 200 deletions, but never
+higher.
 
 A successful batch acknowledgement has `ok: true`,
 `archive_commit: "committed"`, `protocol_version: 2`, echoed `request_id` and
 `batch_id`, `received_samples`, `committed_samples`, `received_deletions`,
 `committed_deletions`, and `projection_state` (`pending`, `current`, or
 `failed`). Counts are nonnegative; committed counts do not exceed received
-counts. It means the originals, tombstones, receipt, and projection work were
+counts, and neither count exceeds the applicable 200-record batch ceiling. It
+means the originals, tombstones, receipt, and projection work were
 committed atomically. **It does not promise that Home Assistant statistics are
 already visible.** The client reports samples archived separately from
 statistics current and probes `archive_status` for per-metric `pending`,

@@ -230,6 +230,62 @@ def test_extreme_quantity_number_is_rejected_as_invalid_sample():
         parse(payload)
 
 
+@pytest.mark.parametrize(
+    "field,above_ceiling",
+    [
+        ("max_batch_bytes", 262_145),
+        ("max_samples_per_batch", 201),
+        ("max_deletions_per_batch", 201),
+    ],
+)
+def test_capability_rejects_advertised_limits_above_protocol_ceilings(
+    field, above_ceiling
+):
+    from custom_components.health_bridge.archive_protocol import ArchiveCapability
+
+    response = json.loads((FIXTURES / "archive-capability-v2.json").read_text())[
+        "response"
+    ]
+    response[field] = above_ceiling
+    with pytest.raises(ValueError, match="invalid_response"):
+        ArchiveCapability.from_dict(response)
+
+
+@pytest.mark.parametrize(
+    "field,above_ceiling",
+    [
+        ("max_batch_bytes", 262_145),
+        ("max_samples_per_batch", 201),
+        ("max_deletions_per_batch", 201),
+    ],
+)
+def test_configured_limits_cannot_raise_protocol_ceilings(field, above_ceiling):
+    from custom_components.health_bridge.archive_protocol import ArchiveLimits
+
+    with pytest.raises(ValueError, match="limit_exceeded"):
+        ArchiveLimits(**{field: above_ceiling})
+
+
+@pytest.mark.parametrize(
+    "field,companion",
+    [
+        ("received_samples", None),
+        ("committed_samples", "received_samples"),
+        ("received_deletions", None),
+        ("committed_deletions", "received_deletions"),
+    ],
+)
+def test_receipt_rejects_counts_above_per_batch_ceiling(field, companion):
+    from custom_components.health_bridge.archive_protocol import ArchiveReceipt
+
+    response = json.loads((FIXTURES / "archive-ack-v2.json").read_text())
+    response[field] = 201
+    if companion:
+        response[companion] = 201
+    with pytest.raises(ValueError, match="invalid_response"):
+        ArchiveReceipt.from_dict(response)
+
+
 def test_receipt_and_capability_and_status_fixtures_round_trip_through_parsers():
     from custom_components.health_bridge.archive_protocol import (
         ArchiveCapability,

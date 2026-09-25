@@ -374,6 +374,17 @@ def validate_archive_request(payload: Any, *, limits: ArchiveLimits) -> ArchiveB
         raise ArchiveProtocolError("invalid_request", "payload") from exc
     if size > limits.max_batch_bytes:
         raise ArchiveProtocolError("limit_exceeded", "payload")
+    return validate_archive_fields(obj, limits=limits)
+
+
+def validate_archive_fields(payload: Any, *, limits: ArchiveLimits) -> ArchiveBatch:
+    """Validate field structure and bounds after the transport size check.
+
+    Internal storage callers use this to revalidate normalized dataclasses:
+    canonical timestamps and numbers can be larger than their wire encodings.
+    HTTP callers must use ``validate_archive_request`` to enforce byte limits.
+    """
+    obj = _object(payload, "invalid_request", "payload")
     request_type = obj.get("request_type")
     if not isinstance(request_type, str) or request_type not in _REQUEST_TYPES:
         raise ArchiveProtocolError("invalid_request", "request_type")

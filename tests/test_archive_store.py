@@ -97,6 +97,54 @@ def test_newer_schema_is_rejected_without_modification(api, tmp_path):
     assert path.read_bytes() == before
 
 
+def test_schema_upgrade_while_waiting_for_migration_lock_is_rejected(
+    api, tmp_path, monkeypatch
+):
+    path = tmp_path / "archive.sqlite3"
+    api.ArchiveStore.open(path)
+    connect = sqlite3.connect
+
+    class UpgradeBeforeLock(sqlite3.Connection):
+        def execute(self, sql, parameters=()):
+            if sql == "BEGIN IMMEDIATE":
+                # Another process can upgrade after the initial unlocked read.
+                other = connect(path)
+                try:
+                    other.execute("PRAGMA user_version=2")
+                finally:
+                    other.close()
+            return super().execute(sql, parameters)
+
+    monkeypatch.setattr(
+        sqlite3,
+        "connect",
+        lambda *args, **kwargs: connect(*args, **kwargs, factory=UpgradeBeforeLock),
+    )
+    with pytest.raises(api.ArchiveStoreError, match="unsupported_schema"):
+        api.ArchiveStore.open(path)
+
+
+def test_valid_near_transport_limit_survives_normalized_storage(api, store, payload):
+    template = payload["samples"][0]
+    payload["samples"] = []
+    for index in range(200):
+        sample = deepcopy(template)
+        sample["uuid"] = f"bd085ccc-22f4-4e80-a865-{index:012x}"
+        sample["metadata"] = {"padding": ""}
+        payload["samples"].append(sample)
+    encoded_size = len(json.dumps(payload, separators=(",", ":")).encode())
+    per_sample, remaining = divmod(262_140 - encoded_size, 200)
+    assert per_sample > 0
+    for index, sample in enumerate(payload["samples"]):
+        sample["metadata"]["padding"] = "x" * (per_sample + (index < remaining))
+    assert len(json.dumps(payload, separators=(",", ":")).encode()) == 262_140
+    value = validate_archive_request(payload, limits=ArchiveLimits())
+    receipt = store.commit_batch(value)
+    assert receipt.committed_samples == 200
+    assert len(store.query_samples(query(api)).samples) == 200
+    assert store.commit_batch(value) == receipt
+
+
 def test_identical_retry_returns_original_receipt_after_restart(
     api, store, payload, tmp_path
 ):

@@ -29,6 +29,7 @@ from .archive_protocol import (
     ArchiveProtocolError,
     ArchiveReceipt,
     ArchiveSample,
+    validate_archive_fields,
     validate_archive_request,
 )
 
@@ -252,6 +253,8 @@ class ArchiveStore:
             db.execute("PRAGMA journal_mode=WAL")
             db.execute("BEGIN IMMEDIATE")
             version = db.execute("PRAGMA user_version").fetchone()[0]
+            if version > ARCHIVE_SCHEMA_VERSION:
+                raise ArchiveStoreError("unsupported_schema")
             if version == 0:
                 for statement in _SCHEMA:
                     db.execute(statement)
@@ -284,7 +287,7 @@ class ArchiveStore:
         resurrect a deleted sample. Committed counts count changed rows.
         """
         _executor_only()
-        batch = validate_archive_request(_wire_batch(batch), limits=ArchiveLimits())
+        batch = validate_archive_fields(_wire_batch(batch), limits=ArchiveLimits())
         wire = _wire_batch(batch)
         payload_hash = _hash(_json(wire))
         scope = (batch.user_id, batch.sample_type)

@@ -1,8 +1,20 @@
 """Compatibility contracts inherited from the immutable Health Bridge v2.1.0 tag."""
 
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from sqlalchemy import select
+
+from homeassistant.components.recorder.db_schema import (
+    StateAttributes,
+    States,
+    StatesMeta,
+)
+
+from pytest_homeassistant_custom_component.components.recorder.common import (
+    async_recorder_block_till_done,
+)
 
 from custom_components.health_bridge import _prepare_backfill_batch
 from custom_components.health_bridge.const import METRIC_ATTRIBUTES_MAP
@@ -123,7 +135,9 @@ async def test_live_v1_acknowledges_applied_sensor(bridge_client, hass):
 
 
 @pytest.mark.asyncio
-async def test_numeric_and_text_backfill_v1_keep_original_shapes(bridge_client, hass):
+async def test_numeric_and_text_backfill_v1_commits_history(
+    recorder_mock, bridge_client, hass
+):
     now = datetime.now(timezone.utc)
     workout = {
         "workout_type": "Running",
@@ -147,30 +161,30 @@ async def test_numeric_and_text_backfill_v1_keep_original_shapes(bridge_client, 
     )
     assert live_response.status == 200
     await hass.async_block_till_done()
+    await async_recorder_block_till_done(hass)
 
     earlier = now - timedelta(hours=1)
-    batch = _prepare_backfill_batch(
-        hass,
-        {
-            "request_type": "backfill",
-            "protocol_version": 1,
-            "request_id": "compat-backfill-1",
-            "data": {
-                "steps": [
-                    {"timestamp": earlier.isoformat(), "value": 7},
-                    {"timestamp": now.isoformat(), "value": 10},
-                ],
-                "last_apple_workout": [
-                    {
-                        **workout,
-                        "timestamp": earlier.isoformat(),
-                        "end_time": earlier.isoformat(),
-                    }
-                ],
-            },
+    payload = {
+        "token": HAL_TOKEN,
+        "user_id": USER_ID,
+        "request_type": "backfill",
+        "protocol_version": 1,
+        "request_id": "compat-backfill-1",
+        "data": {
+            "steps": [
+                {"timestamp": earlier.isoformat(), "value": 7},
+                {"timestamp": now.isoformat(), "value": 10},
+            ],
+            "last_apple_workout": [
+                {
+                    **workout,
+                    "timestamp": earlier.isoformat(),
+                    "end_time": earlier.isoformat(),
+                }
+            ],
         },
-        USER_ID,
-    )
+    }
+    batch = _prepare_backfill_batch(hass, payload, USER_ID)
 
     assert batch.request_id == "compat-backfill-1"
     assert batch.series_by_entity["sensor.steps_compat"] == [
@@ -181,3 +195,58 @@ async def test_numeric_and_text_backfill_v1_keep_original_shapes(bridge_client, 
     assert len(text_points) == 1
     assert "Running" in text_points[0].state
     assert text_points[0].attributes["workout_type"] == "Running"
+
+    response = await bridge_client.post(WEBHOOK, json=payload)
+    assert response.status == 200
+    acknowledgement = await response.json()
+    assert {
+        key: acknowledgement[key]
+        for key in (
+            "ok",
+            "committed",
+            "protocol_version",
+            "request_id",
+            "recorder_schema",
+            "database",
+            "received",
+            "entities",
+        )
+    } == {
+        "ok": True,
+        "committed": True,
+        "protocol_version": 1,
+        "request_id": "compat-backfill-1",
+        "recorder_schema": 53,
+        "database": "sqlite",
+        "received": 3,
+        "entities": 2,
+    }
+    assert acknowledgement["inserted"] >= 2
+
+    with recorder_mock.get_session() as session:
+        rows = session.execute(
+            select(
+                StatesMeta.entity_id,
+                States.state,
+                States.last_updated_ts,
+                StateAttributes.shared_attrs,
+            )
+            .join(States, States.metadata_id == StatesMeta.metadata_id)
+            .outerjoin(
+                StateAttributes, States.attributes_id == StateAttributes.attributes_id
+            )
+            .where(
+                StatesMeta.entity_id.in_(
+                    ("sensor.steps_compat", "sensor.last_apple_workout_compat")
+                )
+            )
+        ).all()
+    historical = {
+        entity_id: (state, json.loads(attributes) if attributes else {})
+        for entity_id, state, timestamp, attributes in rows
+        if abs(timestamp - earlier.timestamp()) < 0.001
+    }
+    assert historical["sensor.steps_compat"][0] == "7"
+    workout_state, workout_attributes = historical["sensor.last_apple_workout_compat"]
+    assert "Running" in workout_state
+    assert workout_attributes["workout_type"] == "Running"

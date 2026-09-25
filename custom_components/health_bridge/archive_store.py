@@ -37,6 +37,9 @@ from .archive_protocol import (
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
 _HOUR = timedelta(hours=1)
 _CLAIM_SECONDS = 300
+# A durable repair intent, outside real HealthKit history. Unlike a flag on an
+# ordinary hour, archive corrections cannot erase it while recorder is cleared.
+FULL_REBUILD_HOUR = datetime.min.replace(tzinfo=timezone.utc)
 
 
 class ArchiveStoreError(ValueError):
@@ -451,7 +454,9 @@ class ArchiveStore:
             cursor,
         )
 
-    def claim_projection_jobs(self, limit: int) -> tuple[ProjectionJob, ...]:
+    def claim_projection_jobs(
+        self, limit: int, *, retry_failed: bool = True
+    ) -> tuple[ProjectionJob, ...]:
         _executor_only()
         if type(limit) is not int or not 1 <= limit <= 500:
             raise ArchiveStoreError("invalid_limit")
@@ -461,9 +466,11 @@ class ArchiveStore:
             db.execute("BEGIN IMMEDIATE")
             rows = db.execute(
                 """SELECT * FROM projection_jobs
-                WHERE state IN ('pending', 'failed') OR lease_until <= ?
+                WHERE (state='pending' AND (lease_until IS NULL OR lease_until <= ?))
+                   OR (state='failed' AND ?)
+                   OR (state='claimed' AND lease_until <= ?)
                 ORDER BY hour_start, user_id, sample_type LIMIT ?""",
-                (_instant(now), limit),
+                (_instant(now), retry_failed, _instant(now), limit),
             ).fetchall()
             for row in rows:
                 job_id = str(uuid4())
@@ -534,6 +541,71 @@ class ArchiveStore:
                 """UPDATE projection_jobs SET state='failed', lease_until=NULL,
                 last_error=? WHERE job_id=? AND state='claimed'""",
                 (error_code, job_id),
+            )
+
+    def defer_projection_job(
+        self, job_id: str, error_code: str, delay: int | None
+    ) -> None:
+        """Retry transient failures without a hot loop; exhaustion is visible."""
+        if delay is None:
+            self.fail_projection_job(job_id, error_code)
+            return
+        with self._connection() as db:
+            db.execute(
+                """UPDATE projection_jobs SET state='pending', lease_until=?, last_error=?
+                WHERE job_id=? AND state='claimed'""",
+                (
+                    _instant(datetime.now(timezone.utc) + timedelta(seconds=delay)),
+                    error_code,
+                    job_id,
+                ),
+            )
+
+    def retry_failed_projections(self, user_id: str) -> None:
+        """Authenticated archive UI may explicitly retry one user's failures."""
+        _executor_only()
+        if not isinstance(user_id, str) or not _ID.fullmatch(user_id):
+            raise ArchiveStoreError("invalid_user")
+        with self._connection() as db:
+            db.execute(
+                """UPDATE projection_jobs SET state='pending', lease_until=NULL,
+                attempts=0, last_error=NULL WHERE user_id=? AND state='failed'""",
+                (user_id,),
+            )
+
+    def request_full_projection_rebuild(self, job: ProjectionJob) -> None:
+        """Persist the intent before any whole-series recorder clear."""
+        with self._connection() as db:
+            db.execute(
+                """INSERT OR IGNORE INTO projection_jobs
+                (job_id, user_id, sample_type, hour_start, state)
+                VALUES (?, ?, ?, ?, 'pending')""",
+                (
+                    str(uuid4()),
+                    job.user_id,
+                    job.sample_type,
+                    _instant(FULL_REBUILD_HOUR),
+                ),
+            )
+
+    def projection_tail_snapshot(self, job: ProjectionJob) -> tuple[str, ...]:
+        """IDs fence completion against new corrections during a replay."""
+        with self._connection() as db:
+            return tuple(
+                row[0]
+                for row in db.execute(
+                    """SELECT job_id FROM projection_jobs
+                WHERE user_id=? AND sample_type=? AND hour_start>=?""",
+                    (job.user_id, job.sample_type, _instant(job.hour_start)),
+                )
+            )
+
+    def complete_projection_snapshot(self, job_ids: tuple[str, ...]) -> None:
+        with self._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            db.executemany(
+                "DELETE FROM projection_jobs WHERE job_id=?",
+                ((job_id,) for job_id in job_ids),
             )
 
     def delete_user_archive(self, user_id: str) -> None:

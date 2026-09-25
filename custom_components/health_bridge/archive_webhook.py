@@ -26,6 +26,7 @@ from .archive_protocol import (
 )
 from .archive_store import ArchiveStore, ArchiveStoreError
 from .const import DOMAIN
+from .statistic_rules import TYPE_METRICS
 
 
 ARCHIVE_REQUEST_TYPES = frozenset(
@@ -34,16 +35,10 @@ ARCHIVE_REQUEST_TYPES = frozenset(
 ARCHIVE_LIMITS = ArchiveLimits()
 ARCHIVE_BATCHES_PER_MINUTE = 60
 ARCHIVE_CONTROLS_PER_MINUTE = 120
-STATISTICS_AVAILABLE = False
 
 # Direct original types whose archive payload semantics are implemented. The
 # projection task expands this registry as its metric rules are audited.
-ARCHIVE_TYPE_METRICS = {
-    "HKQuantityTypeIdentifierStepCount": ("steps",),
-    "HKQuantityTypeIdentifierHeartRate": ("heart_rate",),
-    "HKCategoryTypeIdentifierSleepAnalysis": ("sleep_details",),
-    "HKWorkoutTypeIdentifier": ("last_apple_workout",),
-}
+ARCHIVE_TYPE_METRICS = TYPE_METRICS
 
 
 def archive_error(code: str, status: int) -> web.Response:
@@ -51,9 +46,9 @@ def archive_error(code: str, status: int) -> web.Response:
     return web.json_response({"ok": False, "error": code}, status=status)
 
 
-def _reported_projection_state(state: str) -> str:
+def _reported_projection_state(state: str, statistics_available: bool) -> str:
     """An empty outbox alone cannot prove HA statistics were read back."""
-    if state == "current" and not STATISTICS_AVAILABLE:
+    if state == "current" and not statistics_available:
         return "pending"
     return state
 
@@ -99,6 +94,8 @@ async def async_handle_archive_request(
     hass: HomeAssistant, payload: dict, store: ArchiveStore | None
 ) -> web.Response:
     """Handle only authenticated, scoped v2 input; acknowledge after COMMIT."""
+    worker = hass.data.get(DOMAIN, {}).get("archive_projection_worker")
+    statistics_available = store is not None and worker is not None and worker.available
     try:
         batch = validate_archive_request(payload, limits=ARCHIVE_LIMITS)
     except ArchiveProtocolError as exc:
@@ -119,7 +116,7 @@ async def async_handle_archive_request(
                     for metric in metrics
                 ),
                 archive_available=store is not None,
-                statistics_available=STATISTICS_AVAILABLE,
+                statistics_available=statistics_available,
             ).as_dict()
         )
     if store is None:
@@ -134,7 +131,9 @@ async def async_handle_archive_request(
                     batch.request_id,
                     tuple(
                         MetricProjectionStatus(
-                            metric, _reported_projection_state(state), error
+                            metric,
+                            _reported_projection_state(state, statistics_available),
+                            error,
                         )
                         for sample_type, (state, error) in sorted(states.items())
                         for metric in ARCHIVE_TYPE_METRICS.get(sample_type, ())
@@ -146,7 +145,7 @@ async def async_handle_archive_request(
         receipt = await hass.async_add_executor_job(store.commit_batch, batch)
         acknowledgement = receipt.as_dict()
         acknowledgement["projection_state"] = _reported_projection_state(
-            receipt.projection_state
+            receipt.projection_state, statistics_available
         )
         return web.json_response(acknowledgement)
     except ArchiveStoreError as exc:

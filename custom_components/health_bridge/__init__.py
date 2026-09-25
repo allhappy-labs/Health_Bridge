@@ -682,6 +682,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         async_setup_pal_services(hass)
 
     _setup_webhook(hass)
+    if app_type == "health_assistant_link":
+        try:
+            from .archive_projection import ArchiveProjectionWorker
+        except ImportError:
+            _LOGGER.warning("Health Bridge: archive statistics API unavailable")
+            return True
+
+        domain_data = hass.data[DOMAIN]
+        if (store := domain_data.get("archive_store")) is not None:
+            if "archive_projection_worker" not in domain_data:
+                domain_data["archive_projection_worker"] = ArchiveProjectionWorker(
+                    hass, store
+                )
+            await domain_data["archive_projection_worker"].async_start()
     return True
 
 
@@ -792,6 +806,12 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         entry_tokens = domain_data.setdefault("entry_tokens", {})
         entry_tokens.pop(entry.entry_id, None)
+        if not is_pal_entry and not any(
+            item.get("app_type", "health_assistant_link") == "health_assistant_link"
+            for item in entry_tokens.values()
+        ):
+            if worker := domain_data.pop("archive_projection_worker", None):
+                await worker.async_stop()
         app_type = entry.data.get("app_type", "health_assistant_link")
         entry_ids = domain_data.setdefault("entry_ids", {})
         if entry_ids.get(app_type) == entry.entry_id:

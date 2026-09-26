@@ -401,10 +401,15 @@ recorder:
                         "request_id": "reupload-a", "batch_id": "reupload-a",
                         "samples": [fixture["samples"][0]], "deletions": []}
             reupload_ack = await webhook(reupload)
-            assert reupload_ack["committed_samples"] == 1
+            assert reupload_ack["received_samples"] == 1
+            assert reupload_ack["committed_samples"] == 0, reupload_ack
             assert await webhook(reupload) == reupload_ack
             current_page = await webhook({**inventory, "request_id": "inventory-current"})
             assert current_page["sample_ids"] == [SAMPLE_A], current_page
+            current_raw = await raw({SAMPLE_A: 12, SAMPLE_B: 5})
+            assert {item["uuid"]: item["owner_generation"] for item in current_raw["samples"]} == {
+                SAMPLE_A: 2, SAMPLE_B: 1}
+            await statistics(17)
             final_delete = {**deletion, "request_id": "delete-current-a",
                             "batch_id": "delete-current-a", "deletions": [SAMPLE_A]}
             delete_ack = await webhook(final_delete)

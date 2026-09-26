@@ -74,6 +74,23 @@ async def test_capability_advertises_only_available_archive_contract(archive_cli
     assert capability.max_samples_per_batch <= 200
 
 
+async def test_capability_exposes_all_readable_metrics_and_unique_original_types(
+    archive_client,
+):
+    response = await send(archive_client, payload("archive_capability"))
+    capability = ArchiveCapability.from_dict(await response.json())
+    assert len(capability.supported_metrics) == 107
+    assert len(set(capability.supported_sample_types)) == 99
+    assert "HKWorkoutType" in capability.supported_sample_types
+    assert "HKWorkoutTypeIdentifier" not in capability.supported_sample_types
+    assert not {
+        "uv_exposure_sed",
+        "net_calories",
+        "last_sync_time",
+        "test_connection",
+    }.intersection(capability.supported_metrics)
+
+
 async def test_unbound_hal_entry_preserves_declared_v1_user_namespace(
     bridge_client, hass
 ):

@@ -1,21 +1,63 @@
 # Archive statistics rules and recovery
 
-The archive negotiates four original HealthKit types. This is a subset of the
-111-key live registry, not support for importing every live metric's originals.
+The archive advertises **107 directly readable app metrics across 99 unique
+HealthKit types**: 96 quantity types, two category types, and one workout type.
+All 111 live keys remain intact. The four unsupported keys are
+`uv_exposure_sed` (no direct SED source), `net_calories` (derived),
+`last_sync_time` and `test_connection` (server metadata).
+No HealthKit source is fabricated for these keys.
 
-| Original type | Negotiated metrics | Rule |
-| --- | --- | --- |
-| `HKQuantityTypeIdentifierStepCount` | `steps` | canonical `count`; prorated source-aware hourly totals |
-| `HKQuantityTypeIdentifierHeartRate` | `heart_rate` | canonical `count/min`; sample-start arithmetic mean/min/max |
-| `HKCategoryTypeIdentifierSleepAnalysis` | `sleep_duration`, `sleep_rem_hours`, `sleep_core_hours`, `sleep_deep_hours`, `sleep_awake_hours`, `sleep_unspecified_hours` | actual overlap in UTC hours, duration union, cumulative hours |
-| `HKCategoryTypeIdentifierSleepAnalysis` | `sleep_details`, `asleep_time`, `wake_time` | original timeline only; no numeric statistics |
-| `HKWorkoutTypeIdentifier` | `last_apple_workout` | original timeline only; no numeric statistics |
+The canonical packaged catalog is
+[`archive_catalog_v2.json`](../custom_components/health_bridge/archive_catalog_v2.json).
+The [protocol fixture](protocol/fixtures/archive-catalog-v2.json) is an exact,
+tested copy for client implementation. Capability and projection rules both load
+the packaged catalog. Each source records payload kind, canonical quantity unit,
+minimum app OS, runtime availability condition, and its per-metric live
+aggregation, hourly rule, display unit, conversion, source and interval policies.
+The audit source is app `MetricRegistry`, `HealthObjectTypeID`, `UnitSymbol`
+and `HealthKitTypeResolver` at `52f9a07f7af0373e521a1aebfeb60833c4f0ff25`.
+All 19 v2.1.0 additions have direct quantity sources. Minimum iOS 18 is the
+app registry floor; capability is not proof of device support, authorization or
+readable history. Clients must resolve the type and query permitted originals.
 
-Other live keys are not advertised by archive v2. Adding them requires an
-explicit HealthKit original type, canonical unit, source policy and projection
-rule, with matching app mapping and fixtures. Live sensor `state_class` is not
-used to infer archive semantics. Invalid units and unknown sleep categories
-retain their originals and surface a projection failure.
+| Rule family | Metrics | Interpretation |
+| --- | ---: | --- |
+| Quantity mean | 41 | sample-start arithmetic mean/min/max, all sources |
+| Quantity total | 53 | elapsed-overlap prorating of original sample amounts, source-aware |
+| Category duration | 7 | source-aware interval union: six sleep metrics in hours; mindful sessions in seconds |
+| Timeline only | 6 | sleep details/start/wake, workouts, headphone/environmental audio exposure |
+
+Quantity canonical-unit tokens are the app's `healthKitUnit` expressed as
+`UnitSymbol.rawValue`, **not** the platform-dependent `HKUnit.unitString`.
+Examples: `fraction` is a 0–1 HealthKit percentage; `rpm` and
+`breaths/min` resolve to count/min; `MET` resolves to kcal/(kg·h);
+`unitless` resolves to count for UV index. Originals retain their raw unit
+separately. Statistics convert fractions to percent (×100) and daylight minutes
+to seconds (×60). Exercise/stand minutes, nutrition g/mg/µg, distances m,
+temperatures degC and other quantities retain their catalog units; temperature
+metadata uses °C. Canonical micrograms use the app's micro-sign `µg`, while
+HA mass metadata uses its Greek-mu spelling `μg`, with no numeric conversion.
+Negative water temperatures down to the app's −10 °C lower
+bound remain valid. Source units are explicit even for timeline-only audio.
+
+Live aggregates are not hourly originals: `stand_time` is additive despite its
+live measurement state class, sleep uses actual intervals rather than a daily
+snapshot, and `mindful_minutes` produces seconds despite its key name. Latest
+quantity readings become sample-start means, never forward-filled values.
+Workout effort scores describe mean/min/max of recorded scores, not summed
+effort. Audio dBA exposure remains timeline-only: arithmetic averaging of
+logarithmic levels is not an energy-equivalent exposure.
+
+The canonical workout type is `HKWorkoutType`, matching the app and HealthKit.
+This corrects the pre-release fixture's invented `HKWorkoutTypeIdentifier`;
+only the canonical name is negotiated. No installed archive migration is claimed
+for the obsolete pre-release identifier. Live/backfill v1 are unaffected.
+
+Sleep category 0 (in bed) is excluded; categories 1/3/4/5 contribute to total
+sleep, and 2 to awake. Mindful session category 0 contributes its actual
+duration. Unknown category values and invalid quantity units retain their
+originals but fail numeric projection. Text categories and workouts remain
+browseable without numeric statistics.
 
 Quantity intervals distribute their recorded total by elapsed overlap, not
 by copying a daily total into every hour. At overlapping intervals, the source

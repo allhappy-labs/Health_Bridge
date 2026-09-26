@@ -88,9 +88,12 @@ def project_hour(
         if rule.mode == "duration":
             if not isinstance(payload, CategoryPayload):
                 raise ValueError("invalid_payload_kind")
-            if payload.value not in range(6):
-                raise ValueError("unsupported_sleep_category")
-            if payload.value == 0:  # In-bed is not a sleep stage.
+            if payload.value not in rule.allowed_categories:
+                raise ValueError("unsupported_category")
+            if (
+                rule.sample_type == "HKCategoryTypeIdentifierSleepAnalysis"
+                and payload.value == 0
+            ):  # In-bed is not a sleep stage; mindful sessions use category 0.
                 continue
         else:
             if not isinstance(payload, QuantityPayload):
@@ -99,13 +102,15 @@ def project_hour(
                 raise ValueError("invalid_unit")
             if (
                 not math.isfinite(payload.canonical_value)
-                or payload.canonical_value < 0
+                or payload.canonical_value < rule.minimum_value
             ):
                 raise ValueError("invalid_quantity")
         points.append((sample, start, stop))
     if rule.mode == "mean":
         values = [
-            s.payload.canonical_value for s, start, _ in points if hour <= start < end
+            s.payload.canonical_value * rule.scale
+            for s, start, _ in points
+            if hour <= start < end
         ]
         if not values:
             return None
@@ -141,7 +146,7 @@ def project_hour(
         seconds = (right - left).total_seconds()
         if rule.mode == "duration":
             if any(s.payload.value in rule.categories for s, _, _ in selected):
-                contributions.append(seconds / 3600)
+                contributions.append(seconds * rule.scale)
         else:
             contributions.extend(
                 s.payload.canonical_value * seconds / (stop - start).total_seconds()
@@ -166,7 +171,7 @@ def project_hour(
             )
     if not contributions:
         return None
-    total = math.fsum(contributions)
+    total = math.fsum(contributions) * (rule.scale if rule.mode == "total" else 1)
     return {"start": hour, "state": total, "sum": total}
 
 

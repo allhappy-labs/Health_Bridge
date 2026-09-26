@@ -1,14 +1,9 @@
-"""Audited v2 rules; live sensor state classes are not archive semantics.
-
-Only these four original HealthKit types are negotiated by v2. Remaining live
-metrics need an explicit source/unit audit before they can be added here.
-Quantity canonical units are HealthKit units, not the live display labels.
-"""
+"""Projection rules and capability share the packaged audited source catalog."""
 
 from dataclasses import dataclass
+import json
+from pathlib import Path
 from typing import Literal
-
-from .const import METRIC_ATTRIBUTES_MAP
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,75 +14,40 @@ class StatisticRule:
     canonical_unit: str | None = None
     unit_class: str | None = None
     categories: frozenset[int] = frozenset()
-
-    @property
-    def unit(self) -> str | None:
-        return METRIC_ATTRIBUTES_MAP[self.metric].get("native_unit_of_measurement")
+    unit: str | None = None
+    scale: float = 1
+    minimum_value: float = 0
+    allowed_categories: frozenset[int] = frozenset()
 
     @property
     def additive(self) -> bool:
         return self.mode in {"total", "duration"}
 
 
-_SLEEP = "HKCategoryTypeIdentifierSleepAnalysis"
+CATALOG = json.loads(Path(__file__).with_name("archive_catalog_v2.json").read_text())
 RULES = {
-    rule.metric: rule
-    for rule in (
-        StatisticRule("steps", "HKQuantityTypeIdentifierStepCount", "total", "count"),
-        StatisticRule(
-            "heart_rate", "HKQuantityTypeIdentifierHeartRate", "mean", "count/min"
+    projection["metric"]: StatisticRule(
+        metric=projection["metric"],
+        sample_type=source["sample_type"],
+        mode=projection["mode"],
+        canonical_unit=source["canonical_unit"],
+        unit_class=projection["unit_class"],
+        categories=frozenset(projection["categories"]),
+        unit=projection["unit"],
+        scale=projection["scale"],
+        minimum_value=projection["minimum_value"],
+        allowed_categories=(
+            frozenset(range(6))
+            if source["sample_type"] == "HKCategoryTypeIdentifierSleepAnalysis"
+            else frozenset({0})
+            if source["sample_type"] == "HKCategoryTypeIdentifierMindfulSession"
+            else frozenset()
         ),
-        StatisticRule(
-            "sleep_duration",
-            _SLEEP,
-            "duration",
-            unit_class="duration",
-            categories=frozenset({1, 3, 4, 5}),
-        ),
-        StatisticRule(
-            "sleep_rem_hours",
-            _SLEEP,
-            "duration",
-            unit_class="duration",
-            categories=frozenset({5}),
-        ),
-        StatisticRule(
-            "sleep_core_hours",
-            _SLEEP,
-            "duration",
-            unit_class="duration",
-            categories=frozenset({3}),
-        ),
-        StatisticRule(
-            "sleep_deep_hours",
-            _SLEEP,
-            "duration",
-            unit_class="duration",
-            categories=frozenset({4}),
-        ),
-        StatisticRule(
-            "sleep_awake_hours",
-            _SLEEP,
-            "duration",
-            unit_class="duration",
-            categories=frozenset({2}),
-        ),
-        StatisticRule(
-            "sleep_unspecified_hours",
-            _SLEEP,
-            "duration",
-            unit_class="duration",
-            categories=frozenset({1}),
-        ),
-        StatisticRule("sleep_details", _SLEEP, "timeline"),
-        StatisticRule("asleep_time", _SLEEP, "timeline"),
-        StatisticRule("wake_time", _SLEEP, "timeline"),
-        StatisticRule("last_apple_workout", "HKWorkoutTypeIdentifier", "timeline"),
     )
+    for source in CATALOG["sources"]
+    for projection in source["projections"]
 }
 TYPE_METRICS = {
-    sample_type: tuple(
-        rule.metric for rule in RULES.values() if rule.sample_type == sample_type
-    )
-    for sample_type in dict.fromkeys(rule.sample_type for rule in RULES.values())
+    source["sample_type"]: tuple(p["metric"] for p in source["projections"])
+    for source in CATALOG["sources"]
 }

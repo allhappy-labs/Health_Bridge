@@ -36,8 +36,8 @@ ARCHIVE_LIMITS = ArchiveLimits()
 ARCHIVE_BATCHES_PER_MINUTE = 60
 ARCHIVE_CONTROLS_PER_MINUTE = 120
 
-# Direct original types whose archive payload semantics are implemented. The
-# projection task expands this registry as its metric rules are audited.
+# Exactly one entry per audited original type, including timeline-only sources.
+# This packaged catalog also supplies projection rules; live state classes do not.
 ARCHIVE_TYPE_METRICS = TYPE_METRICS
 
 

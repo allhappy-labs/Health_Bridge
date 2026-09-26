@@ -1,0 +1,2206 @@
+{
+  "catalog_version": 1,
+  "protocol_version": 2,
+  "app_source_commit": "52f9a07f7af0373e521a1aebfeb60833c4f0ff25",
+  "canonical_unit_contract": "Quantity tokens are app UnitSymbol.rawValue for healthKitUnit, not HKUnit.unitString; categories/workouts have no quantity unit.",
+  "unsupported_metrics": {
+    "uv_exposure_sed": "No direct readable HealthKit source; UVExposure is an index, not SED.",
+    "net_calories": "Derived live value, no direct readable HealthKit source.",
+    "last_sync_time": "Server-only synchronization metadata.",
+    "test_connection": "Server-only connection probe."
+  },
+  "sources": [
+    {
+      "sample_type": "HKQuantityTypeIdentifierStepCount",
+      "payload_kind": "quantity",
+      "canonical_unit": "count",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "steps",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "steps",
+          "unit_class": null,
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierDistanceWalkingRunning",
+      "payload_kind": "quantity",
+      "canonical_unit": "m",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "distance",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "m",
+          "unit_class": "distance",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierActiveEnergyBurned",
+      "payload_kind": "quantity",
+      "canonical_unit": "kcal",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "active_calories",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "kcal",
+          "unit_class": "energy",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierBasalEnergyBurned",
+      "payload_kind": "quantity",
+      "canonical_unit": "kcal",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "basal_energy_burned",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "kcal",
+          "unit_class": "energy",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierFlightsClimbed",
+      "payload_kind": "quantity",
+      "canonical_unit": "count",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "flights_climbed",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "floors",
+          "unit_class": null,
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierAppleExerciseTime",
+      "payload_kind": "quantity",
+      "canonical_unit": "min",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "exercise_time",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "min",
+          "unit_class": "duration",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierAppleStandTime",
+      "payload_kind": "quantity",
+      "canonical_unit": "min",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "stand_time",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "min",
+          "unit_class": "duration",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierTimeInDaylight",
+      "payload_kind": "quantity",
+      "canonical_unit": "min",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "time_in_daylight",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "s",
+          "unit_class": "duration",
+          "scale": 60,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierWalkingSpeed",
+      "payload_kind": "quantity",
+      "canonical_unit": "m/s",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "walking_speed",
+          "live_aggregation": "latestSample",
+          "mode": "mean",
+          "unit": "m/s",
+          "unit_class": "speed",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "all_sources_sample_start",
+          "interval_policy": "sample_start_utc_hour"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierWalkingStepLength",
+      "payload_kind": "quantity",
+      "canonical_unit": "m",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "walking_step_length",
+          "live_aggregation": "latestSample",
+          "mode": "mean",
+          "unit": "m",
+          "unit_class": "distance",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "all_sources_sample_start",
+          "interval_policy": "sample_start_utc_hour"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierWalkingAsymmetryPercentage",
+      "payload_kind": "quantity",
+      "canonical_unit": "fraction",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "walking_asymmetry_percentage",
+          "live_aggregation": "latestSample",
+          "mode": "mean",
+          "unit": "%",
+          "unit_class": null,
+          "scale": 100,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "all_sources_sample_start",
+          "interval_policy": "sample_start_utc_hour"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierWalkingDoubleSupportPercentage",
+      "payload_kind": "quantity",
+      "canonical_unit": "fraction",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "walking_double_support_percentage",
+          "live_aggregation": "latestSample",
+          "mode": "mean",
+          "unit": "%",
+          "unit_class": null,
+          "scale": 100,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "all_sources_sample_start",
+          "interval_policy": "sample_start_utc_hour"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierDistanceSwimming",
+      "payload_kind": "quantity",
+      "canonical_unit": "m",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "swimming_distance",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "m",
+          "unit_class": "distance",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierDistanceCycling",
+      "payload_kind": "quantity",
+      "canonical_unit": "m",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "cycling_distance",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "m",
+          "unit_class": "distance",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierRunningPower",
+      "payload_kind": "quantity",
+      "canonical_unit": "W",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "running_power",
+          "live_aggregation": "latestSample",
+          "mode": "mean",
+          "unit": "W",
+          "unit_class": "power",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "all_sources_sample_start",
+          "interval_policy": "sample_start_utc_hour"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierRunningStrideLength",
+      "payload_kind": "quantity",
+      "canonical_unit": "m",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "running_stride_length",
+          "live_aggregation": "latestSample",
+          "mode": "mean",
+          "unit": "m",
+          "unit_class": "distance",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "all_sources_sample_start",
+          "interval_policy": "sample_start_utc_hour"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierRunningGroundContactTime",
+      "payload_kind": "quantity",
+      "canonical_unit": "ms",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "running_ground_contact_time",
+          "live_aggregation": "latestSample",
+          "mode": "mean",
+          "unit": "ms",
+          "unit_class": "duration",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "all_sources_sample_start",
+          "interval_policy": "sample_start_utc_hour"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierRunningVerticalOscillation",
+      "payload_kind": "quantity",
+      "canonical_unit": "cm",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "running_vertical_oscillation",
+          "live_aggregation": "latestSample",
+          "mode": "mean",
+          "unit": "cm",
+          "unit_class": "distance",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "all_sources_sample_start",
+          "interval_policy": "sample_start_utc_hour"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierCyclingPower",
+      "payload_kind": "quantity",
+      "canonical_unit": "W",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "cycling_power",
+          "live_aggregation": "latestSample",
+          "mode": "mean",
+          "unit": "W",
+          "unit_class": "power",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "all_sources_sample_start",
+          "interval_policy": "sample_start_utc_hour"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierCyclingCadence",
+      "payload_kind": "quantity",
+      "canonical_unit": "rpm",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "cycling_cadence",
+          "live_aggregation": "latestSample",
+          "mode": "mean",
+          "unit": "rpm",
+          "unit_class": null,
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "all_sources_sample_start",
+          "interval_policy": "sample_start_utc_hour"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierCyclingSpeed",
+      "payload_kind": "quantity",
+      "canonical_unit": "m/s",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "cycling_speed",
+          "live_aggregation": "latestSample",
+          "mode": "mean",
+          "unit": "m/s",
+          "unit_class": "speed",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "all_sources_sample_start",
+          "interval_policy": "sample_start_utc_hour"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierRunningSpeed",
+      "payload_kind": "quantity",
+      "canonical_unit": "m/s",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "running_speed",
+          "live_aggregation": "latestSample",
+          "mode": "mean",
+          "unit": "m/s",
+          "unit_class": "speed",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "all_sources_sample_start",
+          "interval_policy": "sample_start_utc_hour"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierCyclingFunctionalThresholdPower",
+      "payload_kind": "quantity",
+      "canonical_unit": "W",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "cycling_functional_threshold_power",
+          "live_aggregation": "latestSample",
+          "mode": "mean",
+          "unit": "W",
+          "unit_class": "power",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "all_sources_sample_start",
+          "interval_policy": "sample_start_utc_hour"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierSwimmingStrokeCount",
+      "payload_kind": "quantity",
+      "canonical_unit": "count",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "swimming_stroke_count",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "strokes",
+          "unit_class": null,
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierUnderwaterDepth",
+      "payload_kind": "quantity",
+      "canonical_unit": "m",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "underwater_depth",
+          "live_aggregation": "latestSample",
+          "mode": "mean",
+          "unit": "m",
+          "unit_class": "distance",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "all_sources_sample_start",
+          "interval_policy": "sample_start_utc_hour"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierWaterTemperature",
+      "payload_kind": "quantity",
+      "canonical_unit": "degC",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "water_temperature",
+          "live_aggregation": "latestSample",
+          "mode": "mean",
+          "unit": "°C",
+          "unit_class": "temperature",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": -10,
+          "source_policy": "all_sources_sample_start",
+          "interval_policy": "sample_start_utc_hour"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierWorkoutEffortScore",
+      "payload_kind": "quantity",
+      "canonical_unit": "appleEffortScore",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "workout_effort_score",
+          "live_aggregation": "latestSample",
+          "mode": "mean",
+          "unit": null,
+          "unit_class": null,
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "all_sources_sample_start",
+          "interval_policy": "sample_start_utc_hour"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierEstimatedWorkoutEffortScore",
+      "payload_kind": "quantity",
+      "canonical_unit": "appleEffortScore",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "estimated_workout_effort_score",
+          "live_aggregation": "latestSample",
+          "mode": "mean",
+          "unit": null,
+          "unit_class": null,
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "all_sources_sample_start",
+          "interval_policy": "sample_start_utc_hour"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierDistanceRowing",
+      "payload_kind": "quantity",
+      "canonical_unit": "m",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "distance_rowing",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "m",
+          "unit_class": "distance",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierDistancePaddleSports",
+      "payload_kind": "quantity",
+      "canonical_unit": "m",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "distance_paddle_sports",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "m",
+          "unit_class": "distance",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierDistanceCrossCountrySkiing",
+      "payload_kind": "quantity",
+      "canonical_unit": "m",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "distance_cross_country_skiing",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "m",
+          "unit_class": "distance",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierDistanceDownhillSnowSports",
+      "payload_kind": "quantity",
+      "canonical_unit": "m",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "distance_downhill_snow_sports",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "m",
+          "unit_class": "distance",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierDistanceSkatingSports",
+      "payload_kind": "quantity",
+      "canonical_unit": "m",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "distance_skating_sports",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "m",
+          "unit_class": "distance",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierAppleWalkingSteadiness",
+      "payload_kind": "quantity",
+      "canonical_unit": "fraction",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "walking_steadiness",
+          "live_aggregation": "latestSample",
+          "mode": "mean",
+          "unit": "%",
+          "unit_class": null,
+          "scale": 100,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "all_sources_sample_start",
+          "interval_policy": "sample_start_utc_hour"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierHeartRateRecoveryOneMinute",
+      "payload_kind": "quantity",
+      "canonical_unit": "count/min",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "cardio_recovery",
+          "live_aggregation": "latestSample",
+          "mode": "mean",
+          "unit": "bpm",
+          "unit_class": null,
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "all_sources_sample_start",
+          "interval_policy": "sample_start_utc_hour"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierPhysicalEffort",
+      "payload_kind": "quantity",
+      "canonical_unit": "MET",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "physical_effort",
+          "live_aggregation": "latestSample",
+          "mode": "mean",
+          "unit": "MET",
+          "unit_class": null,
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "all_sources_sample_start",
+          "interval_policy": "sample_start_utc_hour"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierInsulinDelivery",
+      "payload_kind": "quantity",
+      "canonical_unit": "IU",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "insulin_delivery",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "IU",
+          "unit_class": null,
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierSixMinuteWalkTestDistance",
+      "payload_kind": "quantity",
+      "canonical_unit": "m",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "six_minute_walk_test_distance",
+          "live_aggregation": "latestSample",
+          "mode": "mean",
+          "unit": "m",
+          "unit_class": "distance",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "all_sources_sample_start",
+          "interval_policy": "sample_start_utc_hour"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierStairAscentSpeed",
+      "payload_kind": "quantity",
+      "canonical_unit": "m/s",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "stair_ascent_speed",
+          "live_aggregation": "latestSample",
+          "mode": "mean",
+          "unit": "m/s",
+          "unit_class": "speed",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "all_sources_sample_start",
+          "interval_policy": "sample_start_utc_hour"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierStairDescentSpeed",
+      "payload_kind": "quantity",
+      "canonical_unit": "m/s",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "stair_descent_speed",
+          "live_aggregation": "latestSample",
+          "mode": "mean",
+          "unit": "m/s",
+          "unit_class": "speed",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "all_sources_sample_start",
+          "interval_policy": "sample_start_utc_hour"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierBodyMass",
+      "payload_kind": "quantity",
+      "canonical_unit": "kg",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "body_mass",
+          "live_aggregation": "latestSample",
+          "mode": "mean",
+          "unit": "kg",
+          "unit_class": "mass",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "all_sources_sample_start",
+          "interval_policy": "sample_start_utc_hour"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierHeight",
+      "payload_kind": "quantity",
+      "canonical_unit": "m",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "height",
+          "live_aggregation": "latestSample",
+          "mode": "mean",
+          "unit": "m",
+          "unit_class": "distance",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "all_sources_sample_start",
+          "interval_policy": "sample_start_utc_hour"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierBodyFatPercentage",
+      "payload_kind": "quantity",
+      "canonical_unit": "fraction",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "body_fat_percentage",
+          "live_aggregation": "latestSample",
+          "mode": "mean",
+          "unit": "%",
+          "unit_class": null,
+          "scale": 100,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "all_sources_sample_start",
+          "interval_policy": "sample_start_utc_hour"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierLeanBodyMass",
+      "payload_kind": "quantity",
+      "canonical_unit": "kg",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "lean_body_mass",
+          "live_aggregation": "latestSample",
+          "mode": "mean",
+          "unit": "kg",
+          "unit_class": "mass",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "all_sources_sample_start",
+          "interval_policy": "sample_start_utc_hour"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierWaistCircumference",
+      "payload_kind": "quantity",
+      "canonical_unit": "m",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "waist_circumference",
+          "live_aggregation": "latestSample",
+          "mode": "mean",
+          "unit": "m",
+          "unit_class": "distance",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "all_sources_sample_start",
+          "interval_policy": "sample_start_utc_hour"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierBodyTemperature",
+      "payload_kind": "quantity",
+      "canonical_unit": "degC",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "body_temperature",
+          "live_aggregation": "latestSample",
+          "mode": "mean",
+          "unit": "°C",
+          "unit_class": "temperature",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "all_sources_sample_start",
+          "interval_policy": "sample_start_utc_hour"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierHeartRate",
+      "payload_kind": "quantity",
+      "canonical_unit": "count/min",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "heart_rate",
+          "live_aggregation": "latestSample",
+          "mode": "mean",
+          "unit": "bpm",
+          "unit_class": null,
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "all_sources_sample_start",
+          "interval_policy": "sample_start_utc_hour"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierRestingHeartRate",
+      "payload_kind": "quantity",
+      "canonical_unit": "count/min",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "resting_heart_rate",
+          "live_aggregation": "latestSample",
+          "mode": "mean",
+          "unit": "bpm",
+          "unit_class": null,
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "all_sources_sample_start",
+          "interval_policy": "sample_start_utc_hour"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierWalkingHeartRateAverage",
+      "payload_kind": "quantity",
+      "canonical_unit": "count/min",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "walking_heart_rate_average",
+          "live_aggregation": "latestSample",
+          "mode": "mean",
+          "unit": "bpm",
+          "unit_class": null,
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "all_sources_sample_start",
+          "interval_policy": "sample_start_utc_hour"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierHeartRateVariabilitySDNN",
+      "payload_kind": "quantity",
+      "canonical_unit": "ms",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "heart_rate_variability",
+          "live_aggregation": "latestSample",
+          "mode": "mean",
+          "unit": "ms",
+          "unit_class": "duration",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "all_sources_sample_start",
+          "interval_policy": "sample_start_utc_hour"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierOxygenSaturation",
+      "payload_kind": "quantity",
+      "canonical_unit": "fraction",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "oxygen_saturation",
+          "live_aggregation": "latestSample",
+          "mode": "mean",
+          "unit": "%",
+          "unit_class": null,
+          "scale": 100,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "all_sources_sample_start",
+          "interval_policy": "sample_start_utc_hour"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierRespiratoryRate",
+      "payload_kind": "quantity",
+      "canonical_unit": "breaths/min",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "respiratory_rate",
+          "live_aggregation": "latestSample",
+          "mode": "mean",
+          "unit": "breaths/min",
+          "unit_class": null,
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "all_sources_sample_start",
+          "interval_policy": "sample_start_utc_hour"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierVO2Max",
+      "payload_kind": "quantity",
+      "canonical_unit": "mL/kg/min",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "vo2_max",
+          "live_aggregation": "latestSample",
+          "mode": "mean",
+          "unit": "mL/kg/min",
+          "unit_class": null,
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "all_sources_sample_start",
+          "interval_policy": "sample_start_utc_hour"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierAppleSleepingWristTemperature",
+      "payload_kind": "quantity",
+      "canonical_unit": "degC",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "wrist_temperature",
+          "live_aggregation": "latestSample",
+          "mode": "mean",
+          "unit": "°C",
+          "unit_class": "temperature",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "all_sources_sample_start",
+          "interval_policy": "sample_start_utc_hour"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierBloodPressureSystolic",
+      "payload_kind": "quantity",
+      "canonical_unit": "mmHg",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "blood_pressure_systolic",
+          "live_aggregation": "latestSample",
+          "mode": "mean",
+          "unit": "mmHg",
+          "unit_class": "pressure",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "all_sources_sample_start",
+          "interval_policy": "sample_start_utc_hour"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierBloodPressureDiastolic",
+      "payload_kind": "quantity",
+      "canonical_unit": "mmHg",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "blood_pressure_diastolic",
+          "live_aggregation": "latestSample",
+          "mode": "mean",
+          "unit": "mmHg",
+          "unit_class": "pressure",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "all_sources_sample_start",
+          "interval_policy": "sample_start_utc_hour"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierUVExposure",
+      "payload_kind": "quantity",
+      "canonical_unit": "unitless",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "uv_index",
+          "live_aggregation": "latestSample",
+          "mode": "mean",
+          "unit": null,
+          "unit_class": null,
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "all_sources_sample_start",
+          "interval_policy": "sample_start_utc_hour"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierHeadphoneAudioExposure",
+      "payload_kind": "quantity",
+      "canonical_unit": "dBA",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "headphone_audio_exposure",
+          "live_aggregation": "latestSample",
+          "mode": "timeline",
+          "unit": null,
+          "unit_class": null,
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "retain_all_originals",
+          "interval_policy": "original_timeline"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierEnvironmentalAudioExposure",
+      "payload_kind": "quantity",
+      "canonical_unit": "dBA",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "environmental_audio_exposure",
+          "live_aggregation": "latestSample",
+          "mode": "timeline",
+          "unit": null,
+          "unit_class": null,
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "retain_all_originals",
+          "interval_policy": "original_timeline"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKCategoryTypeIdentifierSleepAnalysis",
+      "payload_kind": "category",
+      "canonical_unit": null,
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "sleep_duration",
+          "live_aggregation": "sleepStageDuration",
+          "mode": "duration",
+          "unit": "h",
+          "unit_class": "duration",
+          "scale": 0.0002777777777777778,
+          "categories": [
+            1,
+            3,
+            4,
+            5
+          ],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "union_elapsed_overlap"
+        },
+        {
+          "metric": "sleep_rem_hours",
+          "live_aggregation": "sleepStageDuration",
+          "mode": "duration",
+          "unit": "h",
+          "unit_class": "duration",
+          "scale": 0.0002777777777777778,
+          "categories": [
+            5
+          ],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "union_elapsed_overlap"
+        },
+        {
+          "metric": "sleep_core_hours",
+          "live_aggregation": "sleepStageDuration",
+          "mode": "duration",
+          "unit": "h",
+          "unit_class": "duration",
+          "scale": 0.0002777777777777778,
+          "categories": [
+            3
+          ],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "union_elapsed_overlap"
+        },
+        {
+          "metric": "sleep_deep_hours",
+          "live_aggregation": "sleepStageDuration",
+          "mode": "duration",
+          "unit": "h",
+          "unit_class": "duration",
+          "scale": 0.0002777777777777778,
+          "categories": [
+            4
+          ],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "union_elapsed_overlap"
+        },
+        {
+          "metric": "sleep_awake_hours",
+          "live_aggregation": "sleepStageDuration",
+          "mode": "duration",
+          "unit": "h",
+          "unit_class": "duration",
+          "scale": 0.0002777777777777778,
+          "categories": [
+            2
+          ],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "union_elapsed_overlap"
+        },
+        {
+          "metric": "sleep_unspecified_hours",
+          "live_aggregation": "sleepStageDuration",
+          "mode": "duration",
+          "unit": "h",
+          "unit_class": "duration",
+          "scale": 0.0002777777777777778,
+          "categories": [
+            1
+          ],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "union_elapsed_overlap"
+        },
+        {
+          "metric": "asleep_time",
+          "live_aggregation": "categoryStateConversion",
+          "mode": "timeline",
+          "unit": null,
+          "unit_class": null,
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "retain_all_originals",
+          "interval_policy": "original_timeline"
+        },
+        {
+          "metric": "wake_time",
+          "live_aggregation": "categoryStateConversion",
+          "mode": "timeline",
+          "unit": null,
+          "unit_class": null,
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "retain_all_originals",
+          "interval_policy": "original_timeline"
+        },
+        {
+          "metric": "sleep_details",
+          "live_aggregation": "categoryStateConversion",
+          "mode": "timeline",
+          "unit": null,
+          "unit_class": null,
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "retain_all_originals",
+          "interval_policy": "original_timeline"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKCategoryTypeIdentifierMindfulSession",
+      "payload_kind": "category",
+      "canonical_unit": null,
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "mindful_minutes",
+          "live_aggregation": "intervalDuration",
+          "mode": "duration",
+          "unit": "s",
+          "unit_class": "duration",
+          "scale": 1,
+          "categories": [
+            0
+          ],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "union_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierDietaryWater",
+      "payload_kind": "quantity",
+      "canonical_unit": "mL",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "dietary_water",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "mL",
+          "unit_class": "volume",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierDietaryEnergyConsumed",
+      "payload_kind": "quantity",
+      "canonical_unit": "kcal",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "dietary_energy_consumed",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "kcal",
+          "unit_class": "energy",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierBloodGlucose",
+      "payload_kind": "quantity",
+      "canonical_unit": "mmol/L",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "blood_glucose",
+          "live_aggregation": "latestSample",
+          "mode": "mean",
+          "unit": "mmol/L",
+          "unit_class": "blood_glucose_concentration",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "all_sources_sample_start",
+          "interval_policy": "sample_start_utc_hour"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierDietaryCarbohydrates",
+      "payload_kind": "quantity",
+      "canonical_unit": "g",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "dietary_carbohydrates",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "g",
+          "unit_class": "mass",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierDietaryFatTotal",
+      "payload_kind": "quantity",
+      "canonical_unit": "g",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "dietary_fat",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "g",
+          "unit_class": "mass",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierDietaryProtein",
+      "payload_kind": "quantity",
+      "canonical_unit": "g",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "dietary_protein",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "g",
+          "unit_class": "mass",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierDietaryFiber",
+      "payload_kind": "quantity",
+      "canonical_unit": "g",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "dietary_fiber",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "g",
+          "unit_class": "mass",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierDietarySugar",
+      "payload_kind": "quantity",
+      "canonical_unit": "g",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "dietary_sugar",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "g",
+          "unit_class": "mass",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierDietaryCholesterol",
+      "payload_kind": "quantity",
+      "canonical_unit": "mg",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "dietary_cholesterol",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "mg",
+          "unit_class": "mass",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierDietaryCalcium",
+      "payload_kind": "quantity",
+      "canonical_unit": "mg",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "dietary_calcium",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "mg",
+          "unit_class": "mass",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierDietaryChloride",
+      "payload_kind": "quantity",
+      "canonical_unit": "mg",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "dietary_chloride",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "mg",
+          "unit_class": "mass",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierDietaryIron",
+      "payload_kind": "quantity",
+      "canonical_unit": "mg",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "dietary_iron",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "mg",
+          "unit_class": "mass",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierDietaryMagnesium",
+      "payload_kind": "quantity",
+      "canonical_unit": "mg",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "dietary_magnesium",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "mg",
+          "unit_class": "mass",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierDietaryManganese",
+      "payload_kind": "quantity",
+      "canonical_unit": "mg",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "dietary_manganese",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "mg",
+          "unit_class": "mass",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierDietaryPhosphorus",
+      "payload_kind": "quantity",
+      "canonical_unit": "mg",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "dietary_phosphorus",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "mg",
+          "unit_class": "mass",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierDietaryPotassium",
+      "payload_kind": "quantity",
+      "canonical_unit": "mg",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "dietary_potassium",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "mg",
+          "unit_class": "mass",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierDietarySodium",
+      "payload_kind": "quantity",
+      "canonical_unit": "mg",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "dietary_sodium",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "mg",
+          "unit_class": "mass",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierDietaryZinc",
+      "payload_kind": "quantity",
+      "canonical_unit": "mg",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "dietary_zinc",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "mg",
+          "unit_class": "mass",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierDietaryCaffeine",
+      "payload_kind": "quantity",
+      "canonical_unit": "mg",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "dietary_caffeine",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "mg",
+          "unit_class": "mass",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierDietaryCopper",
+      "payload_kind": "quantity",
+      "canonical_unit": "mg",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "dietary_copper",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "mg",
+          "unit_class": "mass",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierDietaryNiacin",
+      "payload_kind": "quantity",
+      "canonical_unit": "mg",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "dietary_niacin",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "mg",
+          "unit_class": "mass",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierDietaryPantothenicAcid",
+      "payload_kind": "quantity",
+      "canonical_unit": "mg",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "dietary_pantothenic_acid",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "mg",
+          "unit_class": "mass",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierDietaryRiboflavin",
+      "payload_kind": "quantity",
+      "canonical_unit": "mg",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "dietary_riboflavin",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "mg",
+          "unit_class": "mass",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierDietaryThiamin",
+      "payload_kind": "quantity",
+      "canonical_unit": "mg",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "dietary_thiamin",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "mg",
+          "unit_class": "mass",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierDietaryVitaminB6",
+      "payload_kind": "quantity",
+      "canonical_unit": "mg",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "dietary_vitamin_b6",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "mg",
+          "unit_class": "mass",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierDietaryVitaminC",
+      "payload_kind": "quantity",
+      "canonical_unit": "mg",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "dietary_vitamin_c",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "mg",
+          "unit_class": "mass",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierDietaryVitaminE",
+      "payload_kind": "quantity",
+      "canonical_unit": "mg",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "dietary_vitamin_e",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "mg",
+          "unit_class": "mass",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierDietaryBiotin",
+      "payload_kind": "quantity",
+      "canonical_unit": "µg",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "dietary_biotin",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "μg",
+          "unit_class": "mass",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierDietaryChromium",
+      "payload_kind": "quantity",
+      "canonical_unit": "µg",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "dietary_chromium",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "μg",
+          "unit_class": "mass",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierDietaryFolate",
+      "payload_kind": "quantity",
+      "canonical_unit": "µg",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "dietary_folate",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "μg",
+          "unit_class": "mass",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierDietaryIodine",
+      "payload_kind": "quantity",
+      "canonical_unit": "µg",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "dietary_iodine",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "μg",
+          "unit_class": "mass",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierDietaryMolybdenum",
+      "payload_kind": "quantity",
+      "canonical_unit": "µg",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "dietary_molybdenum",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "μg",
+          "unit_class": "mass",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierDietarySelenium",
+      "payload_kind": "quantity",
+      "canonical_unit": "µg",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "dietary_selenium",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "μg",
+          "unit_class": "mass",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierDietaryVitaminA",
+      "payload_kind": "quantity",
+      "canonical_unit": "µg",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "dietary_vitamin_a",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "μg",
+          "unit_class": "mass",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierDietaryVitaminB12",
+      "payload_kind": "quantity",
+      "canonical_unit": "µg",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "dietary_vitamin_b12",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "μg",
+          "unit_class": "mass",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierDietaryVitaminD",
+      "payload_kind": "quantity",
+      "canonical_unit": "µg",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "dietary_vitamin_d",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "μg",
+          "unit_class": "mass",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKQuantityTypeIdentifierDietaryVitaminK",
+      "payload_kind": "quantity",
+      "canonical_unit": "µg",
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "dietary_vitamin_k",
+          "live_aggregation": "dailyCumulativeSum",
+          "mode": "total",
+          "unit": "μg",
+          "unit_class": "mass",
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "lexical_bundle_per_segment",
+          "interval_policy": "prorated_elapsed_overlap"
+        }
+      ]
+    },
+    {
+      "sample_type": "HKWorkoutType",
+      "payload_kind": "workout",
+      "canonical_unit": null,
+      "minimum_ios_major_version": 18,
+      "availability": "requires_runtime_type_and_readable_samples",
+      "projections": [
+        {
+          "metric": "last_apple_workout",
+          "live_aggregation": "latestWorkout",
+          "mode": "timeline",
+          "unit": null,
+          "unit_class": null,
+          "scale": 1,
+          "categories": [],
+          "minimum_value": 0,
+          "source_policy": "retain_all_originals",
+          "interval_policy": "original_timeline"
+        }
+      ]
+    }
+  ]
+}

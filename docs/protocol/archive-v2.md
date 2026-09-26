@@ -12,7 +12,8 @@ isolation**. Phone tokens and the untyped legacy YAML token cannot use archive
 routes. A `token` may be present in the authenticated envelope; the parser
 discards it. This document freezes the JSON shapes for the iOS importer.
 
-The four canonical fixtures are in [`fixtures/`](fixtures/). The capability and
+The canonical wire fixtures and complete source catalog are in
+[`fixtures/`](fixtures/). The capability and
 status fixtures contain one request and one response. The batch fixture is an
 upload request, and the acknowledgement fixture is its response. Dates are
 ISO-8601 UTC with a literal `Z` and at most six fractional digits. Other UTC
@@ -30,7 +31,7 @@ when the integration version changes. Unsupported v2 leaves live v1 available.
 `archive_batch` additionally requires `batch_id`, `sample_type`, `coverage`,
 `samples`, and `deletions`. `sample_type` is one HealthKit quantity or category
 type identifier (`HKQuantityTypeIdentifier…`, `HKCategoryTypeIdentifier…`) or
-`HKWorkoutTypeIdentifier`. A batch contains one type only. The type must also
+`HKWorkoutType`. A batch contains one type only. The type must also
 be in the authenticated server's advertised supported types. A batch has at
 least one sample or deletion, at most 200 of each, and at most 262,144 bytes of
 compact UTF-8 JSON. On the shared JSON-token webhook, Home Assistant's existing

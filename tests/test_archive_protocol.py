@@ -107,7 +107,7 @@ def test_category_and_workout_payloads_must_match_sample_type():
     assert parse(category).samples[0].payload.value == 3
 
     workout = request()
-    workout["sample_type"] = "HKWorkoutTypeIdentifier"
+    workout["sample_type"] = "HKWorkoutType"
     workout["samples"][0]["payload"] = {
         "kind": "workout",
         "schema_version": 1,

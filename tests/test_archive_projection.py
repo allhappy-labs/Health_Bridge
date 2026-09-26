@@ -157,6 +157,74 @@ def test_invalid_canonical_unit_fails_instead_of_fabricating_statistics(api, rul
         api.project_hour([sample(60, unit="kg")], rules["heart_rate"], HOUR)
 
 
+@pytest.mark.parametrize(
+    "metric,unit,value,want",
+    [
+        ("walking_steadiness", "fraction", 0.8, 80),
+        ("oxygen_saturation", "fraction", 0.98, 98),
+        ("water_temperature", "degC", -2, -2),
+        ("cycling_cadence", "rpm", 80, 80),
+        ("blood_glucose", "mmol/L", 5, 5),
+    ],
+)
+def test_new_means_convert_canonical_values_to_statistic_units(
+    api, rules, metric, unit, value, want
+):
+    result = api.project_hour([sample(value, unit=unit)], rules[metric], HOUR)
+    assert result["mean"] == pytest.approx(want)
+    assert result["min"] == pytest.approx(want)
+    assert result["max"] == pytest.approx(want)
+
+
+@pytest.mark.parametrize(
+    "metric,unit,value,want",
+    [
+        ("time_in_daylight", "min", 120, 3600),
+        ("dietary_vitamin_d", "µg", 20, 10),
+        ("distance_rowing", "m", 1000, 500),
+        ("insulin_delivery", "IU", 10, 5),
+        ("stand_time", "min", 60, 30),
+    ],
+)
+def test_new_totals_prorate_originals_with_source_priority(
+    api, rules, metric, unit, value, want
+):
+    points = [
+        sample(value, unit=unit, end=HOUR + timedelta(hours=2)),
+        sample(
+            9999,
+            unit=unit,
+            source="b.phone",
+            uuid="other",
+            end=HOUR + timedelta(hours=2),
+        ),
+    ]
+    result = api.project_hour(points, rules[metric], HOUR)
+    assert result["state"] == pytest.approx(want)
+    assert result["sum"] == pytest.approx(want)
+
+
+def test_mindful_sessions_union_category_zero_intervals_in_seconds(api, rules):
+    points = [
+        sample(0, category=True, end=HOUR + timedelta(minutes=45)),
+        sample(
+            0,
+            category=True,
+            start=HOUR + timedelta(minutes=30),
+            end=HOUR + timedelta(hours=1),
+            uuid="overlap",
+        ),
+    ]
+    assert api.project_hour(points, rules["mindful_minutes"], HOUR)["state"] == 3600
+    with pytest.raises(ValueError, match="unsupported_category"):
+        api.project_hour([sample(1, category=True)], rules["mindful_minutes"], HOUR)
+
+
+def test_logarithmic_audio_exposure_is_timeline_only(api, rules):
+    for metric in ("headphone_audio_exposure", "environmental_audio_exposure"):
+        assert api.project_hour([sample(80, unit="dBA")], rules[metric], HOUR) is None
+
+
 @pytest.fixture
 async def store(hass, tmp_path):
     return await hass.async_add_executor_job(
@@ -296,6 +364,62 @@ async def test_mean_replacement_and_last_sample_deletion_remove_old_hour(
     await commit(hass, store, data, "delete")
     await drain(hass, store, worker)
     assert await rows(hass, recorder_mock, sid) == []
+
+
+@pytest.mark.parametrize(
+    "metric,unit,value,field,want,display,unit_class",
+    [
+        ("oxygen_saturation", "fraction", 0.98, "mean", 98, "%", None),
+        ("water_temperature", "degC", -2, "mean", -2, "°C", "temperature"),
+        ("time_in_daylight", "min", 2, "sum", 120, "s", "duration"),
+        ("dietary_vitamin_d", "µg", 20, "sum", 20, "μg", "mass"),
+        ("insulin_delivery", "IU", 5, "sum", 5, "IU", None),
+        ("workout_effort_score", "appleEffortScore", 5, "mean", 5, None, None),
+        ("mindful_minutes", None, 0, "sum", 60, "s", "duration"),
+    ],
+)
+async def test_new_catalog_families_round_trip_real_recorder_metadata(
+    recorder_mock,
+    api,
+    rules,
+    hass,
+    store,
+    metric,
+    unit,
+    value,
+    field,
+    want,
+    display,
+    unit_class,
+):
+    data = payload(rules[metric].sample_type)
+    data["samples"][0]["end"] = "2024-01-01T10:01:00Z"
+    data["samples"][0]["payload"] = (
+        {"kind": "category", "schema_version": 1, "value": value}
+        if unit is None
+        else {
+            "kind": "quantity",
+            "schema_version": 1,
+            "raw_value": value,
+            "raw_unit": unit,
+            "canonical_value": value,
+            "canonical_unit": unit,
+        }
+    )
+    await commit(hass, store, data)
+    worker = api.ArchiveProjectionWorker(hass, store)
+    await drain(hass, store, worker)
+    sid = api.statistic_id(metric, "person-1")
+    actual = await rows(hass, recorder_mock, sid)
+    assert actual[0][field] == pytest.approx(want)
+    metadata = await recorder_mock.async_add_executor_job(
+        lambda: get_metadata(hass, statistic_ids={sid})
+    )
+    assert metadata[sid][1]["unit_of_measurement"] == display
+    assert metadata[sid][1]["unit_class"] == unit_class
+    assert (await worker.async_projection_status("person-1"))[
+        rules[metric].sample_type
+    ] == ("current", None)
 
 
 async def test_missing_readback_never_reports_current_and_retry_recovers(

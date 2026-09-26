@@ -399,7 +399,7 @@ async def test_event_loop_access_is_rejected_before_sqlite(api, tmp_path):
             {"kind": "category", "schema_version": 1, "value": 3},
         ),
         (
-            "HKWorkoutTypeIdentifier",
+            "HKWorkoutType",
             {
                 "kind": "workout",
                 "schema_version": 1,

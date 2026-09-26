@@ -472,7 +472,7 @@ def _id(value: Any, field: str, code: str = "invalid_request") -> str:
 
 def _sample_type(value: Any, field: str, code: str = "invalid_request") -> str:
     if not isinstance(value, str) or not (
-        _TYPE.fullmatch(value) or value == "HKWorkoutTypeIdentifier"
+        _TYPE.fullmatch(value) or value == "HKWorkoutType"
     ):
         raise ArchiveProtocolError(code, field)
     return value

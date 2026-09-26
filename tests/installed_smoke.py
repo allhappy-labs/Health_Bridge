@@ -60,6 +60,24 @@ def container_command(config, port, name):
     ]
 
 
+def recorder_old_states(recorder, cutoff, container_name):
+    """Read a live recorder database from the same filesystem as its writer."""
+    if container_name:
+        script = (
+            "import sqlite3,sys; "
+            "db=sqlite3.connect('file:/config/home-assistant_v2.db?mode=ro', uri=True); "
+            "print(db.execute('SELECT count(*) FROM states WHERE last_updated_ts < ?', "
+            "(float(sys.argv[1]),)).fetchone()[0])"
+        )
+        output = subprocess.check_output(
+            ["docker", "exec", container_name, "python3", "-c", script, str(cutoff)],
+            text=True, timeout=15,
+        )
+        return int(output.strip())
+    with sqlite3.connect(recorder) as db:
+        return db.execute("SELECT count(*) FROM states WHERE last_updated_ts < ?", (cutoff,)).fetchone()[0]
+
+
 async def stop_owned_container(process, name, *, timeout=40):
     """Stop the exact container, then reap its attached Docker client."""
     if process.poll() is not None:
@@ -286,8 +304,7 @@ recorder:
             cutoff = (now - timedelta(days=1)).timestamp()
 
             def old_states():
-                with sqlite3.connect(recorder) as db:
-                    return db.execute("SELECT count(*) FROM states WHERE last_updated_ts < ?", (cutoff,)).fetchone()[0]
+                return recorder_old_states(recorder, cutoff, container_name)
 
             assert old_states() >= 1, "v1 backfill did not create purgeable recorder rows"
             await request("POST", "/api/services/recorder/purge", json={"keep_days": 1, "repack": False})

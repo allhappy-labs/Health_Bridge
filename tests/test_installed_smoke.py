@@ -2,6 +2,7 @@
 
 import asyncio
 import signal
+import sqlite3
 import subprocess
 import sys
 
@@ -57,3 +58,27 @@ async def test_container_shutdown_targets_named_container_and_reaps_client(monke
         if child.poll() is None:
             child.kill()
             await asyncio.to_thread(child.wait)
+
+
+def test_recorder_count_uses_container_filesystem_while_container_runs(monkeypatch, tmp_path):
+    recorder = tmp_path / "home-assistant_v2.db"
+    recorder.write_text("host view unavailable during container write")
+    calls = []
+
+    def read_inside_container(command, **kwargs):
+        calls.append(command)
+        return "7\n"
+
+    monkeypatch.setattr(installed_smoke.subprocess, "check_output", read_inside_container)
+    assert installed_smoke.recorder_old_states(recorder, 1234, "health-bridge-smoke-test") == 7
+    assert calls[0][:3] == ["docker", "exec", "health-bridge-smoke-test"]
+    assert calls[0][-1] == "1234"
+
+
+def test_recorder_count_reads_local_database_without_container(tmp_path):
+    recorder = tmp_path / "home-assistant_v2.db"
+    with sqlite3.connect(recorder) as db:
+        db.execute("CREATE TABLE states (last_updated_ts REAL)")
+        db.executemany("INSERT INTO states VALUES (?)", [(1233,), (1234,), (1235,)])
+
+    assert installed_smoke.recorder_old_states(recorder, 1234, None) == 1

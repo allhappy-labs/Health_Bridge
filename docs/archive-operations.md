@@ -177,6 +177,11 @@ purges only that disposable recorder, and reads raw originals and hourly
 statistics back through authenticated HTTP/WebSocket APIs. It records HA
 version, fork SHA, working-tree dirtiness, schema, and observations in
 `verification.json`. Never point a diagnostic purge at a real installation.
+The verifier waits for both entries to report loaded and requires normal process
+exit. The local macOS/Homebrew Python 3.14.7 environment currently exposes a
+native interpreter-finalization crash on HA shutdown; successful functional
+checks before shutdown do not satisfy that shutdown gate. Forced cleanup kills
+only the verifier's owned child, waits for termination, and records the result.
 
 This establishes the local Core installation path, not HA OS/Supervisor restore,
 public HACS delivery, physical iOS 27 import, interruption/resume on a phone, or

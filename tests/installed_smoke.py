@@ -90,7 +90,7 @@ recorder:
     def start():
         return subprocess.Popen(
             [sys.executable, "-m", "homeassistant", "--config", str(config), "--skip-pip"],
-            cwd=config, env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+            cwd=config, env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "PYTHONFAULTHANDLER": "1"},
             stdout=log, stderr=subprocess.STDOUT,
         )
 
@@ -125,6 +125,16 @@ recorder:
         async def webhook(payload, token=HAL):
             return await request("POST", "/api/webhook/health_bridge", auth=False,
                                  json={"token": token, "user_id": USER, **payload})
+
+        async def wait_entries_loaded():
+            for _ in range(120):
+                assert process.poll() is None, f"HA exited {process.returncode}"
+                entries = await request("GET", "/api/config/config_entries/entry",
+                                        params={"domain": "health_bridge"})
+                if len(entries) == 2 and all(entry["state"] == "loaded" for entry in entries):
+                    return
+                await asyncio.sleep(1)
+            raise AssertionError("Health Bridge entries did not load")
 
         async def wait_current():
             for _ in range(90):
@@ -174,7 +184,7 @@ recorder:
                 await request("POST", path, json={"next_step_id": app})
                 entry = await request("POST", path, json={"token": token})
                 assert entry["type"] == "create_entry", entry
-            await asyncio.sleep(2)
+            await wait_entries_loaded()
             report["checks"]["both_entries"] = True
             assert (await webhook({"request_type": "phone_assistant_link", "client": "phone_assistant_link", "action": "ping"}, PAL))["protocol_version"] == 3
             now = datetime.now(timezone.utc)
@@ -216,9 +226,10 @@ recorder:
                 report["archive_schema"] = db.execute("PRAGMA user_version").fetchone()[0]
             report["checks"]["ha_backup_contains_restorable_archive"] = True
             await stop()
+            assert process.returncode == 0, f"HA failed graceful shutdown: {process.returncode}"
             process = start()
             await wait_ready()
-            await asyncio.sleep(2)
+            await wait_entries_loaded()
             retry = await webhook(fixture)
             assert retry == ack
             report["checks"]["restart_receipt_idempotence"] = True
@@ -248,6 +259,7 @@ recorder:
             log.close()
             report["finished_at"] = time.time()
             (config / "verification.json").write_text(json.dumps(report, indent=2) + "\n")
+        assert all(item["returncode"] == 0 for item in report.get("shutdowns", [])), report["shutdowns"]
 
 
 if __name__ == "__main__":

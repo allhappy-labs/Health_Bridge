@@ -68,7 +68,7 @@ def test_schema_is_versioned_indexed_and_wal_safe(api, tmp_path):
     path = tmp_path / "archive.sqlite3"
     api.ArchiveStore.open(path)
     with sqlite3.connect(path) as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 2
         assert db.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         tables = {
             r[0]
@@ -90,7 +90,7 @@ def test_schema_is_versioned_indexed_and_wal_safe(api, tmp_path):
 def test_newer_schema_is_rejected_without_modification(api, tmp_path):
     path = tmp_path / "future.sqlite3"
     with sqlite3.connect(path) as db:
-        db.execute("PRAGMA user_version=2")
+        db.execute("PRAGMA user_version=3")
     before = path.read_bytes()
     with pytest.raises(api.ArchiveStoreError, match="unsupported_schema"):
         api.ArchiveStore.open(path)
@@ -110,7 +110,7 @@ def test_schema_upgrade_while_waiting_for_migration_lock_is_rejected(
                 # Another process can upgrade after the initial unlocked read.
                 other = connect(path)
                 try:
-                    other.execute("PRAGMA user_version=2")
+                    other.execute("PRAGMA user_version=3")
                 finally:
                     other.close()
             return super().execute(sql, parameters)

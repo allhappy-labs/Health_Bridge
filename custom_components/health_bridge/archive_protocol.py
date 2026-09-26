@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 ARCHIVE_PROTOCOL_VERSION = 2
-ARCHIVE_SCHEMA_VERSION = 1
+ARCHIVE_SCHEMA_VERSION = 2
 PAYLOAD_SCHEMA_VERSION = 1
 MAX_ARCHIVE_BATCH_BYTES = 262_144
 MAX_ARCHIVE_SAMPLES_PER_BATCH = 200
@@ -25,7 +25,9 @@ MAX_ARCHIVE_DELETIONS_PER_BATCH = 200
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
 _TYPE = re.compile(r"HK(?:Quantity|Category)TypeIdentifier[A-Za-z0-9]{1,96}\Z")
 _UTC = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z\Z")
-_REQUEST_TYPES = frozenset({"archive_capability", "archive_batch", "archive_status"})
+_REQUEST_TYPES = frozenset(
+    {"archive_capability", "archive_batch", "archive_status", "archive_inventory"}
+)
 _STATES = frozenset({"pending", "current", "failed"})
 
 
@@ -115,6 +117,36 @@ class ArchiveSample:
 
 
 @dataclass(frozen=True, slots=True)
+class ArchiveInventoryQuery:
+    """UUID inventory by sample start in the half-open UTC interval."""
+
+    user_id: str
+    sample_type: str
+    start: datetime
+    end: datetime
+    limit: int = 200
+    cursor: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ArchiveInventoryPage:
+    sample_ids: tuple[str, ...]
+    revision: int
+    next_cursor: str | None
+
+    def as_dict(self, request_id: str) -> dict[str, Any]:
+        return {
+            "ok": True,
+            "request_type": "archive_inventory",
+            "protocol_version": 2,
+            "request_id": request_id,
+            "sample_ids": list(self.sample_ids),
+            "revision": self.revision,
+            "next_cursor": self.next_cursor,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class ArchiveBatch:
     """Validated request; control requests have no sample fields."""
 
@@ -127,6 +159,8 @@ class ArchiveBatch:
     coverage: ArchiveCoverage | None = None
     samples: tuple[ArchiveSample, ...] = ()
     deletions: tuple[str, ...] = ()
+    expected_inventory_revision: int | None = None
+    inventory_query: ArchiveInventoryQuery | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -392,10 +426,20 @@ def validate_archive_fields(payload: Any, *, limits: ArchiveLimits) -> ArchiveBa
         raise ArchiveProtocolError("unsupported_protocol", "protocol_version")
     common = {"request_type", "protocol_version", "request_id", "user_id"}
     batch_fields = {"batch_id", "sample_type", "coverage", "samples", "deletions"}
+    inventory_fields = {"sample_type", "start", "end", "limit", "cursor"}
     _keys(
         obj,
-        common | batch_fields if request_type == "archive_batch" else common,
-        {"token"},
+        common
+        | (
+            batch_fields
+            if request_type == "archive_batch"
+            else inventory_fields
+            if request_type == "archive_inventory"
+            else set()
+        ),
+        {"token", "expected_inventory_revision"}
+        if request_type == "archive_batch"
+        else {"token"},
         "invalid_request",
         "payload",
     )
@@ -405,6 +449,26 @@ def validate_archive_fields(payload: Any, *, limits: ArchiveLimits) -> ArchiveBa
         )
     request_id = _id(obj["request_id"], "request_id")
     user_id = _id(obj["user_id"], "user_id")
+    if request_type == "archive_inventory":
+        sample_type = _sample_type(obj["sample_type"], "sample_type")
+        start = _date(obj["start"], "invalid_request", "start")
+        end = _date(obj["end"], "invalid_request", "end")
+        limit = obj["limit"]
+        if start >= end or type(limit) is not int or not 1 <= limit <= 200:
+            raise ArchiveProtocolError("invalid_request", "interval/limit")
+        cursor = obj["cursor"]
+        if cursor is not None:
+            cursor = _bounded_string(cursor, "cursor", 2048, "invalid_request")
+        return ArchiveBatch(
+            request_type,
+            2,
+            request_id,
+            user_id,
+            sample_type=sample_type,
+            inventory_query=ArchiveInventoryQuery(
+                user_id, sample_type, start, end, limit, cursor
+            ),
+        )
     if request_type != "archive_batch":
         return ArchiveBatch(request_type, 2, request_id, user_id)
 
@@ -427,6 +491,14 @@ def validate_archive_fields(payload: Any, *, limits: ArchiveLimits) -> ArchiveBa
     ids = [item.uuid for item in samples] + list(deletions)
     if len(ids) != len(set(ids)):
         raise ArchiveProtocolError("duplicate_id", "samples/deletions")
+    revision = obj.get("expected_inventory_revision")
+    if "expected_inventory_revision" in obj and (
+        type(revision) is not int
+        or not 0 <= revision <= 9_223_372_036_854_775_807
+        or samples
+        or not deletions
+    ):
+        raise ArchiveProtocolError("invalid_request", "expected_inventory_revision")
     return ArchiveBatch(
         request_type,
         2,
@@ -437,6 +509,7 @@ def validate_archive_fields(payload: Any, *, limits: ArchiveLimits) -> ArchiveBa
         coverage,
         samples,
         deletions,
+        revision,
     )
 
 

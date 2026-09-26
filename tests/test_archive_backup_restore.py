@@ -17,6 +17,7 @@ from custom_components.health_bridge.archive_protocol import (
     validate_archive_request,
 )
 from custom_components.health_bridge.archive_store import (
+    ArchiveInventoryQuery,
     ArchiveQuery,
     ArchiveStore,
     ArchiveStoreError,
@@ -80,7 +81,10 @@ def test_checkpoint_copy_restores_all_durable_state(seeded, tmp_path):
                          datetime(2024, 1, 2, tzinfo=timezone.utc))
     assert [sample.uuid for sample in restored.query_samples(query).samples] == [original["uuid"]]
     with sqlite3.connect(restored_path) as db:
-        assert db.execute("PRAGMA user_version").fetchone() == (1,)
+        assert db.execute("PRAGMA user_version").fetchone() == (2,)
+        assert db.execute("SELECT user_id, sample_type, revision FROM inventory_revisions").fetchall() == [
+            ("person-1", first.sample_type, 2),
+        ]
         assert db.execute("PRAGMA integrity_check").fetchone() == ("ok",)
         assert db.execute("PRAGMA foreign_key_check").fetchall() == []
         assert db.execute("SELECT count(*) FROM receipts").fetchone() == (2,)
@@ -96,6 +100,8 @@ def test_checkpoint_copy_restores_all_durable_state(seeded, tmp_path):
     restored.complete_projection_job(jobs[0].job_id)
     assert restored.projection_status("person-1")[first.sample_type] == ("current", None)
     assert store.commit_batch(first) == receipt  # Writes resume after backup.
+    inventory_query = ArchiveInventoryQuery(query.user_id, query.sample_type, query.start, query.end)
+    assert restored.inventory_page(inventory_query) == store.inventory_page(inventory_query)
 
     stale = json.loads(Path("docs/protocol/fixtures/archive-batch-v2.json").read_text())
     stale.update(batch_id="stale-rescan", request_id="stale-rescan", samples=[deleted])
@@ -202,7 +208,7 @@ async def test_real_ha_backup_engine_includes_archive(hass, seeded, tmp_path, in
                 path.write_bytes(inner.extractfile(member).read())
         with sqlite3.connect(path) as db:
             assert db.execute("PRAGMA integrity_check").fetchone() == ("ok",)
-            assert db.execute("PRAGMA user_version").fetchone() == (1,)
+            assert db.execute("PRAGMA user_version").fetchone() == (2,)
             assert db.execute("SELECT count(*) FROM samples").fetchone() == (1,)
             assert db.execute("SELECT count(*) FROM tombstones").fetchone() == (1,)
             assert db.execute("SELECT count(*) FROM receipts").fetchone() == (2,)

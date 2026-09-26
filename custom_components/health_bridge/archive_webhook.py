@@ -30,7 +30,7 @@ from .statistic_rules import TYPE_METRICS
 
 
 ARCHIVE_REQUEST_TYPES = frozenset(
-    {"archive_capability", "archive_batch", "archive_status"}
+    {"archive_capability", "archive_batch", "archive_status", "archive_inventory"}
 )
 ARCHIVE_LIMITS = ArchiveLimits()
 ARCHIVE_BATCHES_PER_MINUTE = 60
@@ -151,6 +151,11 @@ async def async_handle_archive_request(
             )
         if batch.sample_type not in ARCHIVE_TYPE_METRICS:
             return archive_error("unsupported_sample_type", 422)
+        if batch.request_type == "archive_inventory":
+            page = await hass.async_add_executor_job(
+                store.inventory_page, batch.inventory_query
+            )
+            return web.json_response(page.as_dict(batch.request_id))
         receipt = await hass.async_add_executor_job(store.commit_batch, batch)
         acknowledgement = receipt.as_dict()
         # A receipt proves only archive COMMIT. The status request performs
@@ -158,8 +163,10 @@ async def async_handle_archive_request(
         acknowledgement["projection_state"] = "pending"
         return web.json_response(acknowledgement)
     except ArchiveStoreError as exc:
-        if exc.code == "batch_conflict":
+        if exc.code in {"batch_conflict", "inventory_changed"}:
             return archive_error(exc.code, 409)
+        if exc.code in {"invalid_query", "invalid_cursor"}:
+            return archive_error(exc.code, 422)
         return archive_error("archive_unavailable", 503)
     except OSError, sqlite3.Error:
         return archive_error("archive_unavailable", 503)

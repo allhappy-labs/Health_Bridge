@@ -85,6 +85,51 @@ the archive transaction commits.
 
 ## Responses and progress
 
+### Revision-guarded UUID inventory (archive schema 2)
+
+`archive_inventory` adds required `sample_type`, `start`, `end`, `limit`, and
+`cursor` to the standard authenticated HAL envelope. Dates must use UTC `Z`,
+`start < end`, and `limit` must be an integer from 1 through 200. The first
+request uses `cursor: null`. Only sample UUIDs are returned, with standard
+`ok`, `request_type`, `protocol_version`, echoed `request_id`, `sample_ids`,
+nonnegative integer `revision`, and nullable `next_cursor`. See
+[`archive-inventory-v2.json`](fixtures/archive-inventory-v2.json).
+
+Membership is **sample start in `[start,end)`**, not interval overlap. A sample
+starting before the lower bound is excluded even if it ends inside the range;
+one starting inside is included even if it ends after the upper bound. Clients
+must use this identical rule and must not infer deletions before the latest
+HealthKit readable boundary. Rows sort by start then canonical lowercase UUID,
+so same-time samples remain distinct. Tombstones are excluded.
+
+Treat cursors as opaque strings (maximum 2,048 characters). They bind user,
+type, both interval endpoints, page limit, revision, and last key. Changing
+query scope, malformed cursors, or invalid keys returns HTTP 422
+`invalid_cursor`. Cursors are not credentials; the HAL token and configured
+user binding authorize every page. Inventory shares the control rate budget.
+The revision and rows are read within one SQLite snapshot. A subsequent page
+with an outdated revision returns HTTP 409 `inventory_changed`; discard the
+partial comparison and restart that interval from a null cursor.
+
+A deletion-only `archive_batch` may include `expected_inventory_revision`, an
+integer from 0 through 9,223,372,036,854,775,807. A new conditional batch checks
+the current user/type revision under the same `BEGIN IMMEDIATE` transaction as
+its tombstones. Mismatch returns only `{"ok":false,"error":"inventory_changed"}`
+with HTTP 409 and changes no samples, tombstones, coverage, projection jobs,
+revision, or receipt. Ordinary batches retain their existing behavior. Every
+new accepted batch increments that user/type revision once, including no-op
+batches; an exact retry returns its original receipt before checking the
+revision and does not increment it. After an acknowledged conditional deletion,
+restart inventory against the new revision before deleting another set of IDs.
+An empty page has the current revision (zero for a never-imported scope).
+
+Schema 1 upgrades atomically to schema 2, seeding durable per-user/type
+revisions from accepted coverage rows. Revisions survive restart and backups.
+Explicit archive deletion increments and retains revision rows to invalidate
+outstanding comparisons across deletion and re-import. This metadata contains
+only scope identifiers and counters. Inventory and conditional tombstones do
+not assert HealthKit read permission or statistics readiness.
+
 Capability responds with `ok`, `request_type`, `protocol_version`, echoed
 `request_id`, `archive_schema_version`, batch limits, supported sample types and
 metric keys, and separate `archive_available` and `statistics_available`

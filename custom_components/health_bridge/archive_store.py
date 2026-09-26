@@ -21,11 +21,13 @@ import re
 import sqlite3
 from threading import RLock
 from typing import Any, Iterator
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from .archive_protocol import (
     ARCHIVE_SCHEMA_VERSION,
     ArchiveBatch,
+    ArchiveInventoryPage,
+    ArchiveInventoryQuery,
     ArchiveLimits,
     ArchiveProtocolError,
     ArchiveReceipt,
@@ -205,6 +207,8 @@ def _wire_batch(batch: ArchiveBatch) -> dict[str, Any]:
         }
         if batch.request_type != "archive_batch":
             raise ValueError("not_batch")
+        if batch.expected_inventory_revision is not None:
+            value["expected_inventory_revision"] = batch.expected_inventory_revision
         return value
     except (AttributeError, TypeError, ValueError, OverflowError) as exc:
         raise ArchiveProtocolError("invalid_request", "batch") from exc
@@ -266,6 +270,15 @@ class ArchiveStore:
                 for statement in _SCHEMA:
                     db.execute(statement)
                 db.execute("PRAGMA user_version=1")
+            if version <= 1:
+                db.execute("""CREATE TABLE inventory_revisions (
+                    user_id TEXT NOT NULL, sample_type TEXT NOT NULL,
+                    revision INTEGER NOT NULL CHECK (revision >= 0),
+                    PRIMARY KEY (user_id, sample_type))""")
+                db.execute("""INSERT INTO inventory_revisions
+                    SELECT user_id, sample_type, COUNT(*) FROM coverage_intervals
+                    GROUP BY user_id, sample_type""")
+                db.execute("PRAGMA user_version=2")
         return store
 
     @contextmanager
@@ -342,6 +355,17 @@ class ArchiveStore:
                 if prior["payload_hash"] != payload_hash:
                     raise ArchiveStoreError("batch_conflict")
                 return ArchiveReceipt.from_dict(json.loads(prior["receipt_json"]))
+            revision = self._inventory_revision(db, scope)
+            if (
+                batch.expected_inventory_revision is not None
+                and batch.expected_inventory_revision != revision
+            ):
+                raise ArchiveStoreError("inventory_changed")
+            db.execute(
+                """INSERT INTO inventory_revisions VALUES (?, ?, ?)
+                ON CONFLICT(user_id, sample_type) DO UPDATE SET revision=excluded.revision""",
+                (*scope, revision + 1),
+            )
             affected: set[str] = set()
             committed_samples = committed_deletions = 0
             for sample, value in zip(batch.samples, wire["samples"], strict=True):
@@ -434,6 +458,98 @@ class ArchiveStore:
                 ),
             )
             return receipt
+
+    @staticmethod
+    def _inventory_revision(db: sqlite3.Connection, scope: tuple) -> int:
+        row = db.execute(
+            "SELECT revision FROM inventory_revisions WHERE user_id=? AND sample_type=?",
+            scope,
+        ).fetchone()
+        return row[0] if row else 0
+
+    def inventory_page(self, query: ArchiveInventoryQuery) -> ArchiveInventoryPage:
+        """Read revision and bounded UUID page in one SQLite snapshot.
+
+        Membership uses start, not overlap: samples starting before a readable
+        boundary must never be inferred deleted. Cursors bind all query fields.
+        """
+        _executor_only()
+        try:
+            # Reuse the strict wire validation for direct executor callers.
+            start, end = _instant(query.start), _instant(query.end)
+            validate_archive_fields(
+                {
+                    "request_type": "archive_inventory",
+                    "protocol_version": 2,
+                    "request_id": "inventory",
+                    "user_id": query.user_id,
+                    "sample_type": query.sample_type,
+                    "start": start,
+                    "end": end,
+                    "limit": query.limit,
+                    "cursor": query.cursor,
+                },
+                limits=ArchiveLimits(),
+            )
+        except (
+            ArchiveProtocolError,
+            ValueError,
+            TypeError,
+            AttributeError,
+            OverflowError,
+        ) as exc:
+            raise ArchiveStoreError("invalid_query") from exc
+        scope = [query.user_id, query.sample_type, start, end, query.limit]
+        after = None
+        expected_revision = None
+        if query.cursor is not None:
+            try:
+                decoded = json.loads(
+                    base64.b64decode(query.cursor, altchars=b"-_", validate=True)
+                )
+                if (
+                    not isinstance(decoded, list)
+                    or len(decoded) != 8
+                    or decoded[:5] != scope
+                    or type(decoded[4]) is not int
+                    or type(decoded[5]) is not int
+                    or decoded[5] < 0
+                    or any(not isinstance(v, str) for v in decoded[6:])
+                ):
+                    raise ValueError
+                after_start = _instant(_date(decoded[6]))
+                if after_start != decoded[6] or not start <= after_start < end:
+                    raise ValueError
+                # Inventory keys must use the stored canonical lowercase UUID.
+                if str(UUID(decoded[7])) != decoded[7]:
+                    raise ValueError
+                expected_revision, after = decoded[5], decoded[6:]
+            except (ValueError, TypeError, UnicodeError, OverflowError) as exc:
+                raise ArchiveStoreError("invalid_cursor") from exc
+        with self._connection() as db:
+            db.execute("BEGIN")
+            revision = self._inventory_revision(db, (query.user_id, query.sample_type))
+            if expected_revision is not None and revision != expected_revision:
+                raise ArchiveStoreError("inventory_changed")
+            sql = """SELECT start, sample_id FROM samples
+                WHERE user_id=? AND sample_type=? AND start>=? AND start<?"""
+            args = [query.user_id, query.sample_type, start, end]
+            if after:
+                sql += " AND (start, sample_id) > (?, ?)"
+                args.extend(after)
+            sql += " ORDER BY start, sample_id LIMIT ?"
+            rows = db.execute(sql, [*args, query.limit + 1]).fetchall()
+        page = rows[: query.limit]
+        cursor = None
+        if len(rows) > query.limit:
+            cursor = base64.urlsafe_b64encode(
+                _json(
+                    [*scope, revision, page[-1]["start"], page[-1]["sample_id"]]
+                ).encode()
+            ).decode()
+        return ArchiveInventoryPage(
+            tuple(row["sample_id"] for row in page), revision, cursor
+        )
 
     def query_samples(self, query: ArchiveQuery) -> ArchivePage:
         _executor_only()
@@ -700,5 +816,10 @@ class ArchiveStore:
             raise ArchiveStoreError("invalid_user")
         with self._connection() as db:
             db.execute("BEGIN IMMEDIATE")
+            # Preserve monotonic revisions across deletion and subsequent re-import.
+            db.execute(
+                "UPDATE inventory_revisions SET revision=revision+1 WHERE user_id=?",
+                (user_id,),
+            )
             for table in ("samples", "tombstones", "projection_jobs", "receipts"):
                 db.execute(f"DELETE FROM {table} WHERE user_id=?", (user_id,))

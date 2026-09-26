@@ -10,7 +10,7 @@
     "request_type": "archive_capability",
     "protocol_version": 2,
     "request_id": "request-capability-001",
-    "archive_schema_version": 1,
+    "archive_schema_version": 2,
     "max_batch_bytes": 262144,
     "max_samples_per_batch": 200,
     "max_deletions_per_batch": 200,

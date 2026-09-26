@@ -275,8 +275,18 @@ def payload(sample_type=STEP):
 async def commit(hass, store, data, batch_id="batch-001"):
     data = deepcopy(data)
     data.update(batch_id=batch_id, request_id=batch_id)
+    validated = validate_archive_request(data, limits=ArchiveLimits())
+
+    def commit_as_approved_owner():
+        secret = validated.uploader_credential
+        now = datetime.now(UTC)
+        if store.owner_status(validated.user_id, secret, now).state == "unbound":
+            claim = store.claim_owner(validated.user_id, secret, now)
+            store.approve_owner(validated.user_id, claim.claim_id, now)
+        return store.commit_batch(validated, secret)
+
     return await hass.async_add_executor_job(
-        store.commit_batch, validate_archive_request(data, limits=ArchiveLimits())
+        commit_as_approved_owner
     )
 
 
@@ -866,6 +876,7 @@ async def test_status_reconciles_disappeared_statistics_before_current(
         "protocol_version": 2,
         "request_id": "status",
         "user_id": "person-1",
+        "uploader_credential": data["uploader_credential"],
     }
     response = await async_handle_archive_request(hass, request, store)
     assert json.loads(response.body)["metrics"][0]["state"] == "current"

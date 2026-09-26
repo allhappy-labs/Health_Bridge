@@ -9,6 +9,7 @@ function cardFor(lines) {
   const writes = [];
   const outcome = {closed: false, aborted: false, paths: []};
   const context = {
+    document: {createElement: () => ({children: [], append(child) { this.children.push(child); }})},
     HTMLElement: class {}, URLSearchParams, TextDecoder, TransformStream,
     customElements: {get() {}, define(name, element) { registered = element; }},
     window: {showSaveFilePicker: async () => ({createWritable: async () => new WritableStream({
@@ -48,5 +49,21 @@ test("truncated or server-error exports abort the file", async () => {
     await assert.rejects(card._export());
     assert.equal(outcome.closed, false);
     assert.equal(outcome.aborted, true);
+  }
+});
+
+test("category timeline labels mindful sessions separately from sleep", async () => {
+  for (const [type, expected] of [
+    ["HKCategoryTypeIdentifierMindfulSession", "Mindful session"],
+    ["HKCategoryTypeIdentifierSleepAnalysis", "Sleep: In bed"],
+  ]) {
+    const {card} = cardFor([]);
+    const timeline = {replaceChildren(...children) { this.children = children; }};
+    card._el = id => id === "timeline" ? timeline : {};
+    card._params = () => new URLSearchParams({sample_type: type});
+    card._status = async () => {};
+    card._api = async () => ({samples: [{uuid: "sample", start: "2024-01-01T00:00:00Z", end: "2024-01-01T00:10:00Z", payload: {kind: "category", value: 0}}], next_cursor: null});
+    await card._load(false);
+    assert.ok(timeline.children[0].children[0].textContent.endsWith(expected));
   }
 });

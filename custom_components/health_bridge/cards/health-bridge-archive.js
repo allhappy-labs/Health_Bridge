@@ -165,7 +165,8 @@ class HealthBridgeArchive extends HTMLElement {
       const row = document.createElement("li"), button = document.createElement("button");
       const payload = sample.payload;
       const sleep = ["In bed", "Asleep (unspecified)", "Awake", "Core sleep", "Deep sleep", "REM sleep"];
-      const summary = payload.kind === "quantity" ? `${payload.canonical_value} ${payload.canonical_unit}` : payload.kind === "workout" ? `Workout: ${payload.activity_type}; ${payload.duration_seconds}s` : `Sleep: ${sleep[payload.value] || payload.value}`;
+      const category = params.get("sample_type") === "HKCategoryTypeIdentifierSleepAnalysis" ? `Sleep: ${sleep[payload.value] || payload.value}` : params.get("sample_type") === "HKCategoryTypeIdentifierMindfulSession" ? "Mindful session" : `Category: ${payload.value}`;
+      const summary = payload.kind === "quantity" ? `${payload.canonical_value} ${payload.canonical_unit}` : payload.kind === "workout" ? `Workout: ${payload.activity_type}; ${payload.duration_seconds}s` : category;
       button.textContent = `${sample.start} – ${sample.end}: ${summary}`;
       button.onclick = () => this._run(async () => {
         const detail = await this._api(`sample?${new URLSearchParams({sample_type: params.get("sample_type"), uuid: sample.uuid})}`);

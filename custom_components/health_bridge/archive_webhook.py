@@ -160,7 +160,9 @@ async def async_handle_archive_request(
         acknowledgement = receipt.as_dict()
         # A receipt proves only archive COMMIT. The status request performs
         # fresh recorder reconciliation before it may say statistics current.
-        acknowledgement["projection_state"] = "pending"
+        acknowledgement["projection_state"] = (
+            "failed" if receipt.projection_state == "failed" else "pending"
+        )
         return web.json_response(acknowledgement)
     except ArchiveStoreError as exc:
         if exc.code in {"batch_conflict", "inventory_changed"}:

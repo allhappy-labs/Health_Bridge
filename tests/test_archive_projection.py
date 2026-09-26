@@ -459,6 +459,47 @@ async def test_permanent_projection_error_surfaces_without_health_values(
     )
 
 
+@pytest.mark.parametrize("recovery", ["correction", "deletion"])
+async def test_projection_range_failure_retry_preserves_recorder_and_recovers(
+    recorder_mock, api, hass, store, monkeypatch, recovery
+):
+    worker = api.ArchiveProjectionWorker(hass, store)
+    data = payload()
+    await commit(hass, store, data)
+    await drain(hass, store, worker)
+    sid = api.statistic_id("steps", "person-1")
+    before = await rows(hass, recorder_mock, sid)
+    unsafe = deepcopy(data)
+    unsafe["samples"][0].update(uuid="bd085ccc-22f4-4e80-a865-149bb5b0d1d5",
+                                 start="0001-01-01T00:00:00Z", end="9999-12-31T23:59:59Z")
+    receipt = await commit(hass, store, unsafe, "oversized")
+    assert receipt.projection_state == "failed"
+
+    # Even a broken worker must never really sweep 87 million hours in this test.
+    series = api._series
+    def bounded_series(*args):
+        for index, row in enumerate(series(*args)):
+            assert index < 500, "unbounded projection sweep"
+            yield row
+    monkeypatch.setattr(api, "_series", bounded_series)
+    await hass.async_add_executor_job(store.retry_failed_projections, "person-1")
+    job = (await hass.async_add_executor_job(store.claim_projection_jobs, 1))[0]
+    await worker.async_rebuild(job)
+    assert (await worker.async_projection_status("person-1"))[STEP] == (
+        "failed", "projection_range_exceeded"
+    )
+    assert await rows(hass, recorder_mock, sid) == before
+    if recovery == "correction":
+        unsafe["samples"][0].update(start=data["samples"][0]["start"], end=data["samples"][0]["end"])
+    else:
+        unsafe.update(deletions=[unsafe["samples"][0]["uuid"]], samples=[])
+    await commit(hass, store, unsafe, "recover")
+    await hass.async_add_executor_job(store.retry_failed_projections, "person-1")
+    await drain(hass, store, worker)
+    assert (await worker.async_projection_status("person-1"))[STEP] == ("current", None)
+    assert (await rows(hass, recorder_mock, sid))[0]["sum"] == before[0]["sum"] * (2 if recovery == "correction" else 1)
+
+
 async def test_expired_claim_is_recovered_after_restart(
     recorder_mock, api, hass, store, projection_clock
 ):

@@ -97,6 +97,99 @@ def test_newer_schema_is_rejected_without_modification(api, tmp_path):
     assert path.read_bytes() == before
 
 
+def test_extreme_interval_archives_raw_with_one_failed_repair_job(
+    api, store, payload, monkeypatch, tmp_path
+):
+    original_hours = api._hours
+
+    def bounded_hours(start, end):
+        for index, hour in enumerate(original_hours(start, end)):
+            assert index < 16_384, "unbounded hour expansion"
+            yield hour
+
+    monkeypatch.setattr(api, "_hours", bounded_hours)
+    payload["samples"][0].update(start="0001-01-01T00:00:00Z", end="9999-12-31T23:59:59Z")
+    value = batch(payload)
+    receipt = store.commit_batch(value)
+    assert receipt.committed_samples == 1
+    assert receipt.projection_state == "failed"
+    assert store.sample_detail("person-1", TYPE, UUID)["end"].startswith("9999-")
+    assert store.projection_status("person-1")[TYPE] == ("failed", "projection_range_exceeded")
+    assert store.claim_projection_jobs(500, retry_failed=False) == ()
+    with sqlite3.connect(store._path) as db:
+        assert db.execute("SELECT count(*) FROM projection_jobs").fetchone() == (1,)
+        assert db.execute("SELECT count(*) FROM receipts").fetchone() == (1,)
+        restored_path = tmp_path / "restored.sqlite"
+        with sqlite3.connect(restored_path) as restored:
+            db.backup(restored)
+    reopened = api.ArchiveStore.open(restored_path)
+    assert reopened.commit_batch(value) == receipt
+    assert reopened.projection_status("person-1")[TYPE] == ("failed", "projection_range_exceeded")
+
+
+def test_batch_hour_budget_keeps_all_originals_and_no_partial_jobs(api, store, payload):
+    first = payload["samples"][0]
+    first.update(start="2000-01-01T00:00:00Z", end="2001-01-01T00:00:00Z")
+    second = deepcopy(first)
+    second.update(uuid=UUID2, start="2002-01-01T00:00:00Z", end="2003-01-01T00:00:00Z")
+    payload["samples"].append(second)
+    receipt = store.commit_batch(batch(payload))
+    assert receipt.committed_samples == 2
+    assert receipt.projection_state == "failed"
+    with sqlite3.connect(store._path) as db:
+        assert db.execute("SELECT count(*) FROM samples").fetchone() == (2,)
+        assert db.execute("SELECT state, last_error FROM projection_jobs").fetchall() == [
+            ("failed", "projection_range_exceeded")
+        ]
+
+
+@pytest.mark.parametrize("start,end,expected", [
+    ("0002-01-01T00:00:00Z", "0002-01-01T00:00:00Z", "pending"),
+    ("2000-01-01T00:00:00Z", "2001-01-01T00:00:00Z", "pending"),
+    ("2000-01-01T00:00:00Z", "2001-01-01T00:00:00.000001Z", "failed"),
+])
+def test_projection_budget_counts_half_open_hours_without_an_age_cutoff(
+    store, payload, start, end, expected
+):
+    payload["samples"][0].update(start=start, end=end)
+    receipt = store.commit_batch(batch(payload))
+    assert receipt.committed_samples == 1
+    assert receipt.projection_state == expected
+
+
+def test_migrated_schema_one_extreme_original_is_retained_but_replay_is_bounded(
+    api, store, payload
+):
+    value = batch(payload)
+    receipt = store.commit_batch(value)
+    # Model a schema-1 archive from before ingestion budgets existed.
+    with sqlite3.connect(store._path) as db:
+        row = json.loads(db.execute("SELECT sample_json FROM samples").fetchone()[0])
+        row.update(start="0001-01-01T00:00:00Z", end="9999-12-31T23:59:59Z")
+        db.execute("UPDATE samples SET start=?, end=?, sample_json=?", (row["start"], row["end"], json.dumps(row)))
+        db.execute("DROP TABLE inventory_revisions")
+        db.execute("PRAGMA user_version=1")
+    migrated = api.ArchiveStore.open(store._path)
+    assert migrated.commit_batch(value) == receipt
+    assert migrated.sample_detail("person-1", TYPE, UUID)["end"].startswith("9999-")
+    with pytest.raises(ValueError, match="^projection_range_exceeded$"):
+        migrated.validate_projection_ranges("person-1", TYPE)
+
+
+def test_projection_budget_failure_rolls_back_with_receipt_failure(api, store, payload):
+    with sqlite3.connect(store._path) as db:
+        db.execute("CREATE TRIGGER fail_receipt BEFORE INSERT ON receipts BEGIN SELECT RAISE(ABORT, 'injected'); END")
+    payload["samples"][0].update(start="0001-01-01T00:00:00Z", end="9999-12-31T23:59:59Z")
+    # A tripwire prevents the unfixed implementation from allocating millions.
+    from unittest.mock import patch
+    with patch.object(api, "_hours", side_effect=AssertionError("unbounded expansion")):
+        with pytest.raises(sqlite3.IntegrityError, match="injected"):
+            store.commit_batch(batch(payload))
+    with sqlite3.connect(store._path) as db:
+        for table in ("samples", "projection_jobs", "receipts", "coverage_intervals", "inventory_revisions"):
+            assert db.execute(f"SELECT count(*) FROM {table}").fetchone() == (0,)
+
+
 def test_schema_upgrade_while_waiting_for_migration_lock_is_rejected(
     api, tmp_path, monkeypatch
 ):

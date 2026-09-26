@@ -39,6 +39,8 @@ from .archive_store import (
     ProjectionJob,
     FULL_REBUILD_HOUR,
     RECONCILE_HOUR,
+    MAX_SAMPLE_PROJECTION_HOURS,
+    _projection_hour_count,
 )
 from .statistic_rules import RULES, TYPE_METRICS, StatisticRule
 
@@ -181,6 +183,10 @@ def _samples(store: ArchiveStore, job: ProjectionJob) -> Iterator[ArchiveSample]
     )
     while True:
         page = store.query_samples(query)
+        # Imports can arrive after preflight; never sweep an oversized interval.
+        for sample in page.samples:
+            if _projection_hour_count(sample.start, sample.end) > MAX_SAMPLE_PROJECTION_HOURS:
+                raise ValueError("projection_range_exceeded")
         yield from page.samples
         if page.next_cursor is None:
             return
@@ -496,6 +502,7 @@ class ArchiveProjectionWorker:
                         "invalid_quantity",
                         "unsupported_sleep_category",
                         "unsupported_sample_type",
+                        "projection_range_exceeded",
                     }
                     else "projection_invalid"
                 )
@@ -526,6 +533,9 @@ class ArchiveProjectionWorker:
                 self.store.complete_projection_job, job.job_id
             )
             return
+        await self.hass.async_add_executor_job(
+            self.store.validate_projection_ranges, job.user_id, job.sample_type
+        )
         recorder = get_instance(self.hass)
         full = job.hour_start == FULL_REBUILD_HOUR
         reconcile = job.hour_start == RECONCILE_HOUR

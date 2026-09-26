@@ -139,13 +139,19 @@ support for all 111 live metric keys. Advertised limits may be lower than the
 protocol ceilings of 262,144 bytes, 200 samples, and 200 deletions, but never
 higher.
 
-The initial route registry accepts direct step-count, heart-rate, sleep-analysis,
-and workout originals, associated with `steps`, `heart_rate`, `sleep_details`,
-and `last_apple_workout`. This deliberately small registry expands with audited
-projection rules. `statistics_available` remains false until a working
-statistics writer is integrated. Until that worker confirms statistics readback,
-public acknowledgement and status projection states remain `pending` (or
-`failed` for recorded errors), even when the outbox is empty. The SQLite archive lives at
+The packaged registry advertises 107 direct metrics from 99 source types:
+101 statistics metrics and six timeline metrics. The integrated statistics
+worker reports availability when recorder is ready and verifies readback before
+status can report `current`. Acknowledgements report `pending` or `failed`;
+they prove the raw archive commit, not recorder visibility. Projection expansion
+is capped at 8,784 intersecting UTC hours per sample and 16,384 enumerated hours
+per batch, including old correction/deletion intervals and repeated overlaps.
+Exceeding a budget still archives all originals and tombstones atomically;
+the receipt reports `failed`, and status reports `projection_range_exceeded`.
+One durable repair intent replaces the affected type's jobs. Correct/delete
+oversized originals and explicitly retry to rebuild surviving statistics.
+Historical age is unrestricted. See [operations](../archive-operations.md).
+The SQLite archive uses schema 2 and lives at
 `.storage/health_bridge_archive.sqlite`, separately from recorder. Store opening,
 commits, and status reads run in Home Assistant's executor. An unavailable store
 does not prevent live integration setup; capability advertises

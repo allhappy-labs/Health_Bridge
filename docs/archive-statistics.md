@@ -113,20 +113,29 @@ missing/corrected hours without clearing surviving data. Existing empty-hour
 repair still uses the distinct full-rebuild sentinel when deletion is necessary.
 Status reconciliation scans relevant originals and bounded recorder windows, so
 a multiyear status request may take time; it does not cache a stale current claim.
-Archive receipts report `pending` and prove only archive COMMIT. Statistics
+Archive receipts report `pending` or a durable projection `failed` state and prove only archive COMMIT. Statistics
 completion comes from the separate reconciled status response.
 Worker polling is 30 seconds; archive receipt acknowledgement never waits for it.
 The worker starts with the health entry and stops when its last entry unloads;
 Phone Assistant Link entries do not own it.
 
-Test evidence uses the installed HA package and real recorder SQLite fixtures.
-An installed Home Assistant deployment, recorder purge, backup restore, and
-iOS-device end-to-end verification remain separate release gates.
+Test evidence uses the installed HA package and real recorder SQLite fixtures
+for import, correction, deletion, migration and recovery. The pinned official
+Home Assistant 2026.9.3 container gate covers installation, HAL/PAL/v1 behavior,
+archive import, restart, backup restore, and purge/readback. iOS-device
+end-to-end verification remains a separate release gate.
 
 The currently qualified release minimum is **Home Assistant 2026.9.3 with
 Python 3.14**. Earlier versions have not passed these archive/statistics gates;
-API import fallback is not a claim of whole-fork compatibility. Task 7 must
-reconcile the inherited `hacs.json` minimum of 2024.12.0 with that precise
-qualified baseline (or qualify an earlier exact version), and run installation,
-import, correction, deletion, restart, purge/readback and upgrade checks against
-the declared minimum before publication. This task does not change the manifest.
+API import fallback is not a claim of whole-fork compatibility. `hacs.json`
+declares this qualified minimum. The catalog contains 107 direct metrics from
+99 source types, with 101 statistics metrics and six timeline metrics.
+
+Projection work has an explicit failure budget without discarding originals:
+8,784 intersecting hours per sample and 16,384 enumerated hours per ingestion
+batch, including old intervals and repeated overlaps. Oversized work commits
+one failed full-rebuild intent with `projection_range_exceeded`. The worker
+checks surviving interval sizes with constant memory before recorder mutation
+and again while paging originals. Correct/delete the oversized source record,
+then explicitly retry; see [operations](archive-operations.md). This uses the
+existing schema-2 outbox and does not impose a historical-age limit.

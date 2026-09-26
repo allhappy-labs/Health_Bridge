@@ -74,6 +74,19 @@ async def test_capability_advertises_only_available_archive_contract(archive_cli
     assert capability.max_samples_per_batch <= 200
 
 
+async def test_oversized_projection_reports_failed_but_acknowledges_raw_commit(archive_client, hass):
+    data = payload()
+    data["samples"][0].update(start="0001-01-01T00:00:00Z", end="9999-12-31T23:59:59Z")
+    response = await send(archive_client, data)
+    assert response.status == 200
+    receipt = await response.json()
+    assert receipt["committed_samples"] == 1
+    assert receipt["projection_state"] == "failed"
+    assert len((await stored_samples(hass)).samples) == 1
+    repeated = await send(archive_client, data)
+    assert await repeated.json() == receipt
+
+
 async def test_capability_exposes_all_readable_metrics_and_unique_original_types(
     archive_client,
 ):

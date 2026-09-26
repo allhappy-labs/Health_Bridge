@@ -32,7 +32,7 @@ claimed to support it. Full-history iOS qualification remains a separate gate.
 3. Start HA. Both existing entries should load without being recreated. Check
    their HAL live and PAL ping routes, then query `archive_capability` over the
    existing `/api/webhook/health_bridge` route using the HAL token. Expect schema
-   1, protocol 2, 107 supported metrics, and both archive/statistics availability
+   2, protocol 2, 107 supported metrics from 99 source types, and both archive/statistics availability
    true when recorder is ready. PAL credentials cannot upload an archive.
 4. Add the `custom:health-bridge-archive` card using an administrator account;
    the integration registers its JavaScript resource automatically. Browse a
@@ -62,8 +62,8 @@ fork during updates. This task does not create or publish a remote.
 Originals and recovery state live in
 `<HA config>/.storage/health_bridge_archive.sqlite`, separate from
 `home-assistant_v2.db`. SQLite may also create `-wal` and `-shm` sidecars. Archive
-schema 1 includes originals, tombstones, idempotent receipts, coverage intervals
-and authorization bounds, and pending/claimed/failed projection jobs. SQLite
+schema 2 includes originals, tombstones, idempotent receipts, coverage intervals
+and authorization bounds, inventory revisions, and pending/claimed/failed projection jobs. SQLite
 transactions commit all of those before acknowledgement. Expired claimed jobs
 become eligible again after their five-minute lease.
 
@@ -74,6 +74,18 @@ heart-rate data can be substantial. Inspect file sizes and free disk space
 before and during large imports. Acknowledged rows survive restart; projection
 may remain pending if recorder is unavailable. Long-term numeric statistics
 live in recorder under the `health_bridge:` namespace; they are derived copies.
+
+An original of any age or duration can be archived. Projection expansion is
+limited to 8,784 intersecting UTC hours per sample and 16,384 enumerated hours
+per batch (including old intervals on correction/deletion, and overlapping
+intervals). Exceeding either budget commits the originals and receipt with
+projection state `failed` and one durable full-rebuild intent; status reports
+`projection_range_exceeded`. It never schedules the entire oversized range.
+Correct or delete oversized originals at the source, sync those changes, then
+use Retry in the archive card. Retry checks all surviving intervals before
+clearing or writing recorder statistics. Batch-budget failures with individually
+valid intervals can be retried directly. Originals remain browsable/exportable.
+The failure intent uses the existing schema-2 outbox and survives backup/restore.
 
 Store and backup access exposes sensitive health records, source/device
 provenance and authorization bounds. Protect the HA configuration directory,
@@ -117,7 +129,7 @@ HA configuration when preserving entry identities and credentials.
    the old main file and its sidecars aside together before installing the
    checkpointed replacement while HA is stopped.
 3. Run SQLite `PRAGMA integrity_check` (expect `ok`), `PRAGMA foreign_key_check`
-   (expect no rows), and `PRAGMA user_version` (expect `1` for this release).
+   (expect no rows), and `PRAGMA user_version` (expect `2` for this release).
    Install the matching fork code and restart HA. Verify raw sample UUIDs,
    repeated batch receipts, coverage, and projection status. Pending work
    resumes; claimed jobs wait at most their remaining five-minute lease.

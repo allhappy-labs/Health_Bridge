@@ -40,6 +40,8 @@ from .archive_protocol import (
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
 _HOUR = timedelta(hours=1)
 _CLAIM_SECONDS = 300
+MAX_SAMPLE_PROJECTION_HOURS = 8_784
+MAX_BATCH_PROJECTION_HOURS = 16_384
 # A durable repair intent, outside real HealthKit history. Unlike a flag on an
 # ordinary hour, archive corrections cannot erase it while recorder is cleared.
 FULL_REBUILD_HOUR = datetime.min.replace(tzinfo=timezone.utc)
@@ -244,6 +246,13 @@ def _hours(start: datetime, end: datetime) -> Iterator[str]:
         hour += _HOUR
 
 
+def _projection_hour_count(start: datetime, end: datetime) -> int:
+    """Count intersecting hours arithmetically, including an instantaneous point."""
+    span = end - start.replace(minute=0, second=0, microsecond=0)
+    hours, remainder = divmod(span, _HOUR)
+    return max(1, hours + bool(remainder))
+
+
 class ArchiveStore:
     """A path and synchronous operations; never a shared SQLite connection."""
 
@@ -367,6 +376,22 @@ class ArchiveStore:
                 (*scope, revision + 1),
             )
             affected: set[str] = set()
+            range_exceeded = False
+            expanded_hours = 0
+
+            def affect(start: datetime, end: datetime) -> None:
+                nonlocal range_exceeded, expanded_hours
+                if range_exceeded:
+                    return
+                count = _projection_hour_count(start, end)
+                expanded_hours += count
+                if count > MAX_SAMPLE_PROJECTION_HOURS or expanded_hours > MAX_BATCH_PROJECTION_HOURS:
+                    range_exceeded = True
+                    affected.clear()
+                    return
+                for hour in _hours(start, end):
+                    affected.add(hour)
+
             committed_samples = committed_deletions = 0
             for sample, value in zip(batch.samples, wire["samples"], strict=True):
                 key = (*scope, sample.uuid)
@@ -384,8 +409,8 @@ class ArchiveStore:
                 if old and old["content_hash"] == content_hash:
                     continue
                 if old:
-                    affected.update(_hours(_date(old["start"]), _date(old["end"])))
-                affected.update(_hours(sample.start, sample.end))
+                    affect(_date(old["start"]), _date(old["end"]))
+                affect(sample.start, sample.end)
                 db.execute(
                     """INSERT INTO samples VALUES (?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(user_id, sample_type, sample_id) DO UPDATE SET
@@ -407,7 +432,7 @@ class ArchiveStore:
                     key,
                 ).fetchone()
                 if old:
-                    affected.update(_hours(_date(old["start"]), _date(old["end"])))
+                    affect(_date(old["start"]), _date(old["end"]))
                     db.execute(
                         "DELETE FROM samples WHERE user_id=? AND sample_type=? AND sample_id=?",
                         key,
@@ -417,6 +442,18 @@ class ArchiveStore:
                     (*key, batch.batch_id),
                 )
                 committed_deletions += result.rowcount
+            if range_exceeded:
+                # Keep the original transaction and one durable repair intent.
+                # Replacing IDs also fences snapshots from a prior projection.
+                db.execute(
+                    "DELETE FROM projection_jobs WHERE user_id=? AND sample_type=?", scope
+                )
+                db.execute(
+                    """INSERT INTO projection_jobs
+                    (job_id, user_id, sample_type, hour_start, state, last_error)
+                    VALUES (?, ?, ?, ?, 'failed', 'projection_range_exceeded')""",
+                    (str(uuid4()), *scope, _instant(FULL_REBUILD_HOUR)),
+                )
             for hour in sorted(affected):
                 db.execute(
                     """INSERT INTO projection_jobs
@@ -428,7 +465,8 @@ class ArchiveStore:
                 )
             # The receipt reports the archive's outbox state, not HA visibility.
             pending = db.execute(
-                "SELECT 1 FROM projection_jobs WHERE user_id=? AND sample_type=? LIMIT 1",
+                """SELECT state FROM projection_jobs WHERE user_id=? AND sample_type=?
+                ORDER BY state='failed' DESC LIMIT 1""",
                 scope,
             ).fetchone()
             receipt = ArchiveReceipt(
@@ -438,7 +476,7 @@ class ArchiveStore:
                 committed_samples,
                 len(batch.deletions),
                 committed_deletions,
-                "pending" if pending else "current",
+                ("failed" if pending["state"] == "failed" else "pending") if pending else "current",
             )
             db.execute(
                 "INSERT INTO receipts VALUES (?, ?, ?, ?)",
@@ -458,6 +496,20 @@ class ArchiveStore:
                 ),
             )
             return receipt
+
+    def validate_projection_ranges(self, user_id: str, sample_type: str) -> None:
+        """Bound replay even after retry, correction, migration, or backup restore.
+
+        Scan timestamps with constant memory before any recorder mutation. The
+        raw archive has no age or duration ceiling; only projection is limited.
+        """
+        with self._connection() as db:
+            for row in db.execute(
+                "SELECT start, end FROM samples WHERE user_id=? AND sample_type=?",
+                (user_id, sample_type),
+            ):
+                if _projection_hour_count(_date(row["start"]), _date(row["end"])) > MAX_SAMPLE_PROJECTION_HOURS:
+                    raise ValueError("projection_range_exceeded")
 
     @staticmethod
     def _inventory_revision(db: sqlite3.Connection, scope: tuple) -> int:

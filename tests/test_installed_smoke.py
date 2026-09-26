@@ -7,6 +7,7 @@ import subprocess
 import sys
 
 import installed_smoke
+import pytest
 
 
 async def test_shutdown_reaps_owned_child_that_ignores_sigterm():
@@ -82,3 +83,55 @@ def test_recorder_count_reads_local_database_without_container(tmp_path):
         db.executemany("INSERT INTO states VALUES (?)", [(1233,), (1234,), (1235,)])
 
     assert installed_smoke.recorder_old_states(recorder, 1234, None) == 1
+
+
+async def test_already_exited_container_client_still_gets_a_shutdown_record(tmp_path):
+    child = subprocess.Popen([sys.executable, "-c", "raise SystemExit(0)"])
+    await asyncio.to_thread(child.wait)
+    log = tmp_path / "process.log"
+    log.write_text("Home Assistant Core finish process exit code 0\n")
+
+    record = await installed_smoke.record_owned_shutdown(child, "health-bridge-smoke-test", log, 0)
+
+    assert record["returncode"] == 0
+    assert record["core_returncode"] == 0
+    assert record["forced_kill"] is False
+
+
+def test_container_gate_rejects_core_failure_when_docker_exits_zero(tmp_path):
+    log = tmp_path / "process.log"
+    first_run = "Home Assistant Core finish process exit code 0\n"
+    log.write_text(first_run + "Home Assistant Core finish process exit code 1\n")
+    second_core_exit = installed_smoke.read_core_exit_code(log, len(first_run.encode()))
+    shutdowns = [
+        {"returncode": 0, "core_returncode": 0, "forced_kill": False},
+        {"returncode": 0, "core_returncode": second_core_exit, "forced_kill": False},
+    ]
+
+    assert second_core_exit == 1
+    assert installed_smoke.shutdowns_clean(shutdowns, "container") is False
+
+
+def test_container_gate_requires_two_shutdown_records():
+    one_clean_exit = [{"returncode": 0, "core_returncode": 0, "forced_kill": False}]
+
+    assert installed_smoke.shutdowns_clean(one_clean_exit, "container") is False
+
+
+def test_container_gate_accepts_two_clean_docker_and_core_exits():
+    clean_exit = {"returncode": 0, "core_returncode": 0, "forced_kill": False}
+
+    assert installed_smoke.shutdowns_clean([clean_exit, clean_exit.copy()], "container") is True
+
+
+def test_container_gate_requires_exact_clean_fork_sha():
+    report = {"fork_sha": "expected", "working_tree_dirty": False}
+
+    installed_smoke.assert_expected_source(report, "container", "expected")
+    with pytest.raises(AssertionError):
+        installed_smoke.assert_expected_source(report, "container", None)
+    with pytest.raises(AssertionError):
+        installed_smoke.assert_expected_source(report, "container", "other")
+    with pytest.raises(AssertionError):
+        installed_smoke.assert_expected_source({**report, "working_tree_dirty": True},
+                                               "container", "expected")

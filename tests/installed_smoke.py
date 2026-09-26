@@ -1,7 +1,7 @@
 """Opt-in installed smoke test; always creates its own loopback-only HA config.
 
 Run: PYTHONDONTWRITEBYTECODE=1 .venv/bin/python tests/installed_smoke.py
-Container: PYTHONDONTWRITEBYTECODE=1 .venv/bin/python tests/installed_smoke.py --runtime container
+Container: PYTHONDONTWRITEBYTECODE=1 .venv/bin/python tests/installed_smoke.py --runtime container --expected-sha COMMITTED_SHA
 No production URL/config can be supplied. Only synthetic health data is used.
 """
 
@@ -13,6 +13,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import shutil
 import signal
@@ -34,6 +35,7 @@ TYPE = "HKQuantityTypeIdentifierStepCount"
 USER = "person-1"
 SID = "health_bridge:steps_" + hashlib.sha256(USER.encode()).hexdigest()[:32]
 CONTAINER_IMAGE = "ghcr.io/home-assistant/home-assistant@sha256:d8922685169707fd91e8b9729902d975f06157d005e422874d201e0261dda196"
+CONTAINER_HA_VERSION = "2026.9.3"
 
 
 async def stop_owned_process(process, *, timeout=40):
@@ -102,7 +104,47 @@ async def stop_owned_container(process, name, *, timeout=40):
         return True
 
 
-async def main(runtime="local"):
+def read_core_exit_code(log_path, start_offset):
+    """Read the one HA Core exit recorded for this container run's log segment."""
+    segment = log_path.read_bytes()[start_offset:].decode("utf-8", errors="replace")
+    codes = re.findall(r"Home Assistant Core finish process exit code (-?\d+)", segment)
+    return int(codes[0]) if len(codes) == 1 else None
+
+
+async def record_owned_shutdown(process, container_name, log_path, start_offset):
+    """Record an owned child even if it exited before shutdown was requested."""
+    if process.poll() is None:
+        forced = (await stop_owned_container(process, container_name) if container_name
+                  else await stop_owned_process(process))
+    else:
+        await asyncio.to_thread(process.wait)
+        forced = False
+    record = {
+        "pid": process.pid, "exit_code_source": "docker_run" if container_name else "owned_child",
+        "forced_kill": forced, "returncode": process.returncode,
+    }
+    if container_name:
+        record["core_returncode"] = read_core_exit_code(log_path, start_offset)
+    return record
+
+
+def shutdown_clean(record, runtime):
+    return (record["returncode"] == 0 and not record["forced_kill"]
+            and (runtime != "container" or record.get("core_returncode") == 0))
+
+
+def shutdowns_clean(shutdowns, runtime):
+    return len(shutdowns) == 2 and all(shutdown_clean(item, runtime) for item in shutdowns)
+
+
+def assert_expected_source(report, runtime, expected_sha):
+    if runtime == "container":
+        assert expected_sha, "Container verification requires --expected-sha"
+        assert report["fork_sha"] == expected_sha, (report["fork_sha"], expected_sha)
+        assert not report["working_tree_dirty"], "Fork checkout is dirty"
+
+
+async def main(runtime="local", expected_sha=None):
     runs = ROOT / ".installed-verification"
     runs.mkdir(exist_ok=True)
     config = Path(tempfile.mkdtemp(prefix="run-", dir=runs))
@@ -142,12 +184,19 @@ recorder:
             ["git", "status", "--porcelain"], cwd=ROOT, text=True)), "checks": {}}
     if container_name:
         report.update({"container_name": container_name, "container_image": CONTAINER_IMAGE})
+    assert_expected_source(report, runtime, expected_sha)
     print(f"Disposable config: {config}", flush=True)
     process = None
-    log = (config / "process.log").open("a")
+    log_path = config / "process.log"
+    log = log_path.open("a")
     access = None
+    start_log_offset = 0
+    recorded_processes = set()
 
     def start():
+        nonlocal start_log_offset
+        log.flush()
+        start_log_offset = log_path.stat().st_size
         if container_name:
             return subprocess.Popen(container_command(config, port, container_name),
                                     cwd=config, stdout=log, stderr=subprocess.STDOUT)
@@ -158,14 +207,11 @@ recorder:
         )
 
     async def stop():
-        if process and process.poll() is None:
-            forced = (await stop_owned_container(process, container_name) if container_name
-                      else await stop_owned_process(process))
-            report.setdefault("shutdowns", []).append({
-                "pid": process.pid, "exit_code_source": "docker_run" if container_name else "owned_child",
-                "forced_kill": forced, "returncode": process.returncode,
-            })
-            if forced:
+        if process and process not in recorded_processes:
+            shutdown = await record_owned_shutdown(process, container_name, log_path, start_log_offset)
+            report.setdefault("shutdowns", []).append(shutdown)
+            recorded_processes.add(process)
+            if shutdown["forced_kill"]:
                 print(f"Shutdown timeout: killed and reaped owned HA child {process.pid}", flush=True)
 
     async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as session:
@@ -243,6 +289,8 @@ recorder:
                 "grant_type": "authorization_code", "code": code["auth_code"], "client_id": base + "/"})
             access = credentials["access_token"]
             report["homeassistant_version"] = (await request("GET", "/api/config"))["version"]
+            if runtime == "container":
+                assert report["homeassistant_version"] == CONTAINER_HA_VERSION, report["homeassistant_version"]
             for app, token in (("health_assistant_link", HAL), ("phone_assistant_link", PAL)):
                 flow = await request("POST", "/api/config/config_entries/flow", json={"handler": "health_bridge", "show_advanced_options": False})
                 path = f"/api/config/config_entries/flow/{flow['flow_id']}"
@@ -291,7 +339,7 @@ recorder:
                 report["archive_schema"] = db.execute("PRAGMA user_version").fetchone()[0]
             report["checks"]["ha_backup_contains_restorable_archive"] = True
             await stop()
-            assert process.returncode == 0, f"HA failed graceful shutdown: {process.returncode}"
+            assert shutdown_clean(report["shutdowns"][-1], runtime), report["shutdowns"][-1]
             process = start()
             await wait_ready()
             await wait_entries_loaded()
@@ -321,17 +369,15 @@ recorder:
         finally:
             await stop()
             log.close()
-            report["checks"]["clean_shutdowns"] = (
-                len(report.get("shutdowns", [])) == 2
-                and all(item["returncode"] == 0 and not item["forced_kill"]
-                        for item in report["shutdowns"])
-            )
+            report["checks"]["clean_shutdowns"] = shutdowns_clean(report.get("shutdowns", []), runtime)
             report["finished_at"] = time.time()
             (config / "verification.json").write_text(json.dumps(report, indent=2) + "\n")
-        assert all(item["returncode"] == 0 for item in report.get("shutdowns", [])), report["shutdowns"]
+        assert report["checks"]["clean_shutdowns"], report.get("shutdowns", [])
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runtime", choices=("local", "container"), default="local")
-    asyncio.run(main(parser.parse_args().runtime))
+    parser.add_argument("--expected-sha")
+    args = parser.parse_args()
+    asyncio.run(main(args.runtime, args.expected_sha))

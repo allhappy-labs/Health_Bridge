@@ -282,6 +282,13 @@ class ArchiveProjectionWorker:
             self.store.retry_failed_projections, user_id
         )
 
+    async def async_delete_archive(self, user_id: str) -> None:
+        """Delete originals while preserving recorder copies and other users."""
+        async with self._lock:
+            await self.hass.async_add_executor_job(
+                self.store.delete_user_archive, user_id
+            )
+
     async def _read(self, recorder, sid, start, end):
         if end - start > CHUNK * HOUR:
             raise ValueError("statistics_window_too_large")
@@ -469,6 +476,10 @@ class ArchiveProjectionWorker:
     async def async_rebuild(self, job: ProjectionJob) -> None:
         async with self._lock:
             try:
+                if not await self.hass.async_add_executor_job(
+                    self.store.projection_claim_exists, job.job_id
+                ):
+                    return
                 await self._rebuild(job)
             except ValueError as exc:
                 code = (

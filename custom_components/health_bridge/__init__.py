@@ -711,6 +711,9 @@ async def _register_frontend(hass: HomeAssistant) -> None:
     if data.get("frontend_registered"):
         return
     try:
+        from .archive_api import register_archive_views
+
+        register_archive_views(hass)
         card_file = os.path.join(
             os.path.dirname(__file__), "cards", "health-bridge-cards.js"
         )
@@ -724,6 +727,11 @@ async def _register_frontend(hass: HomeAssistant) -> None:
         resource_url = f"{_CARD_URL}?v={token}"
         frontend.add_extra_js_url(hass, resource_url)
         await _upsert_lovelace_resource(hass, resource_url)
+        from .archive_api import CARD_URL
+
+        archive_url = f"{CARD_URL}?v=1"
+        frontend.add_extra_js_url(hass, archive_url)
+        await _upsert_lovelace_resource(hass, archive_url, CARD_URL)
         data["frontend_registered"] = True
         _LOGGER.info(
             "Health Bridge: registered built-in dashboard cards v%s", CARD_VERSION
@@ -735,7 +743,7 @@ async def _register_frontend(hass: HomeAssistant) -> None:
 
 
 async def _upsert_lovelace_resource(
-    hass: HomeAssistant, resource_url: str
+    hass: HomeAssistant, resource_url: str, base_url: str = _CARD_URL
 ) -> None:
     """Persist the cards module in Lovelace's resource collection.
 
@@ -759,7 +767,7 @@ async def _upsert_lovelace_resource(
 
     for item in resources.async_items():
         existing_url = item.get("url", "")
-        if not existing_url.startswith(_CARD_URL):
+        if not existing_url.startswith(base_url):
             continue
         if existing_url != resource_url:
             update_item = getattr(resources, "async_update_item", None)

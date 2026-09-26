@@ -496,6 +496,32 @@ class ArchiveStore:
                 )
         return tuple(jobs)
 
+    def sample_detail(
+        self, user_id: str, sample_type: str, sample_id: str
+    ) -> dict | None:
+        """Return one original using its full partition key, never UUID alone."""
+        with self._connection() as db:
+            row = db.execute(
+                "SELECT sample_json FROM samples WHERE user_id=? AND sample_type=? AND sample_id=?",
+                (user_id, sample_type, sample_id),
+            ).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def tombstone_page(
+        self, user_id: str, sample_type: str, after: str = "", limit: int = 200
+    ) -> tuple[dict, ...]:
+        """Bounded UUID keyset; tombstones carry no original date to filter."""
+        if type(limit) is not int or not 1 <= limit <= 500:
+            raise ArchiveStoreError("invalid_limit")
+        with self._connection() as db:
+            rows = db.execute(
+                """SELECT sample_id, batch_id FROM tombstones
+                WHERE user_id=? AND sample_type=? AND sample_id>?
+                ORDER BY sample_id LIMIT ?""",
+                (user_id, sample_type, after, limit),
+            ).fetchall()
+        return tuple({"uuid": row[0], "batch_id": row[1]} for row in rows)
+
     def projection_status(self, user_id: str) -> dict[str, tuple[str, str | None]]:
         """Read per-type outbox state without claiming or modifying jobs.
 
@@ -531,6 +557,17 @@ class ArchiveStore:
             db.execute(
                 "DELETE FROM projection_jobs WHERE job_id=? AND state='claimed'",
                 (job_id,),
+            )
+
+    def projection_claim_exists(self, job_id: str) -> bool:
+        """Fence a queued worker against explicit archive deletion/correction."""
+        with self._connection() as db:
+            return (
+                db.execute(
+                    "SELECT 1 FROM projection_jobs WHERE job_id=? AND state='claimed'",
+                    (job_id,),
+                ).fetchone()
+                is not None
             )
 
     def fail_projection_job(self, job_id: str, error_code: str) -> None:

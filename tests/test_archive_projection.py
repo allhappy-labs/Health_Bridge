@@ -348,6 +348,24 @@ async def test_expired_claim_is_recovered_after_restart(
     ] == 12
 
 
+async def test_archive_delete_invalidates_claim_before_it_can_clear_retained_statistics(
+    recorder_mock, api, hass, store
+):
+    worker = api.ArchiveProjectionWorker(hass, store)
+    data = payload()
+    await commit(hass, store, data)
+    await drain(hass, store, worker)
+    sid = api.statistic_id("steps", "person-1")
+    assert (await rows(hass, recorder_mock, sid))[0]["state"] == 12
+    data["samples"][0]["payload"].update(raw_value=14, canonical_value=14)
+    await commit(hass, store, data, "correction")
+    claimed = (await hass.async_add_executor_job(store.claim_projection_jobs, 1))[0]
+    await hass.async_add_executor_job(store.delete_user_archive, "person-1")
+    await worker.async_rebuild(claimed)
+    assert not await hass.async_add_executor_job(store.claim_projection_jobs, 1)
+    assert (await rows(hass, recorder_mock, sid))[0]["state"] == 12
+
+
 async def test_worker_health_entry_lifecycle_preserves_pal(
     recorder_mock, api, hass, bridge_entries
 ):

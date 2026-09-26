@@ -11,7 +11,7 @@
       },
       "health_assistant_link": {
         "title": "Add Health Assistant Link",
-        "description": "Use the generated token in Health Assistant Link. Keep this token private and do not reuse it for Phone Assistant Link.",
+        "description": "Use the generated token in Health Assistant Link. Keep this token private and do not reuse it for Phone Assistant Link. The Health Bridge Archive dashboard card requires a Home Assistant administrator and the exact Health Bridge person ID. Archive deletion leaves recorder history, external statistics, backups, and exports intact.",
         "data": {
           "token": "Security Token"
         }

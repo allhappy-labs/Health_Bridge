@@ -16,6 +16,8 @@ HAL_TOKEN = "health-assistant-compatibility-token-00001"
 PAL_TOKEN = "phone-assistant-compatibility-token-000001"
 USER = "archive-person"
 TYPE = "HKQuantityTypeIdentifierStepCount"
+SECRET = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+OTHER_SECRET = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE"
 
 
 @pytest.fixture
@@ -24,6 +26,13 @@ async def archive_client(bridge_client, bridge_entries, hass):
     hass.config_entries.async_update_entry(entry, data={**entry.data, "user_id": USER})
     await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done()
+    store = hass.data["health_bridge"]["archive_store"]
+    claim = await hass.async_add_executor_job(
+        store.claim_owner, USER, SECRET, datetime.now(timezone.utc)
+    )
+    await hass.async_add_executor_job(
+        store.approve_owner, USER, claim.claim_id, datetime.now(timezone.utc)
+    )
     return bridge_client
 
 
@@ -41,7 +50,13 @@ def payload(kind="archive_batch", **changes):
             "protocol_version": 2,
             "request_id": "control-1",
         }
-    return {**result, "user_id": USER, "token": HAL_TOKEN, **changes}
+    return {
+        **result,
+        "user_id": USER,
+        "token": HAL_TOKEN,
+        "uploader_credential": SECRET,
+        **changes,
+    }
 
 
 async def send(client, data):
@@ -72,9 +87,57 @@ async def test_capability_advertises_only_available_archive_contract(archive_cli
     assert "steps" in capability.supported_metrics
     assert capability.max_batch_bytes <= 262144
     assert capability.max_samples_per_batch <= 200
+    assert capability.ownership_contract_version == 1
+    assert capability.owner_state == "active"
+    assert capability.owner_generation == 1
 
 
-async def test_oversized_projection_reports_failed_but_acknowledges_raw_commit(archive_client, hass):
+async def test_claim_requires_admin_approval_and_transfer_revokes_prior_phone(
+    archive_client, hass
+):
+    proposed = await send(
+        archive_client, payload("archive_owner_claim", uploader_credential=OTHER_SECRET)
+    )
+    assert proposed.status == 200
+    claim = await proposed.json()
+    assert claim["owner_state"] == "pending"
+    assert claim["fingerprint"] != "66687aadf862"
+    pending = await send(
+        archive_client, payload("archive_capability", uploader_credential=OTHER_SECRET)
+    )
+    assert (await pending.json())["owner_state"] == "pending"
+    rejected = await send(archive_client, payload(uploader_credential=OTHER_SECRET))
+    assert rejected.status == 403
+    assert await rejected.json() == {"ok": False, "error": "owner_pending"}
+    store = hass.data["health_bridge"]["archive_store"]
+    await hass.async_add_executor_job(
+        store.approve_owner, USER, claim["claim_id"], datetime.now(timezone.utc)
+    )
+    old = await send(archive_client, payload("archive_status"))
+    assert old.status == 403
+    assert await old.json() == {"ok": False, "error": "owner_changed"}
+    current = await send(
+        archive_client, payload("archive_capability", uploader_credential=OTHER_SECRET)
+    )
+    assert (await current.json())["owner_generation"] == 2
+
+
+async def test_missing_or_malformed_owner_proof_never_reads_status(archive_client):
+    missing = payload("archive_status")
+    del missing["uploader_credential"]
+    response = await send(archive_client, missing)
+    assert response.status == 403
+    assert await response.json() == {"ok": False, "error": "owner_required"}
+    response = await send(
+        archive_client, payload("archive_status", uploader_credential="invalid")
+    )
+    assert response.status == 422
+    assert "metrics" not in await response.json()
+
+
+async def test_oversized_projection_reports_failed_but_acknowledges_raw_commit(
+    archive_client, hass
+):
     data = payload()
     data["samples"][0].update(start="0001-01-01T00:00:00Z", end="9999-12-31T23:59:59Z")
     response = await send(archive_client, data)
@@ -108,8 +171,9 @@ async def test_unbound_hal_entry_preserves_declared_v1_user_namespace(
     bridge_client, hass
 ):
     response = await send(bridge_client, payload())
-    assert response.status == 200
-    assert len((await stored_samples(hass)).samples) == 1
+    assert response.status == 403
+    assert (await response.json())["error"] == "owner_required"
+    assert len((await stored_samples(hass)).samples) == 0
 
 
 async def test_duplicate_batch_with_changed_content_is_conflict(archive_client):
@@ -186,12 +250,12 @@ async def test_archive_store_outage_keeps_live_and_capability_available(
 
 
 async def test_unbound_entry_status_never_leaks_another_users_projection(bridge_client):
-    assert (await send(bridge_client, payload())).status == 200
+    assert (await send(bridge_client, payload())).status == 403
     response = await send(
         bridge_client, payload("archive_status", user_id="another-person")
     )
-    assert response.status == 200
-    assert (await response.json())["metrics"] == []
+    assert response.status == 403
+    assert (await response.json())["error"] == "owner_required"
 
 
 @pytest.mark.parametrize(
@@ -330,7 +394,7 @@ async def test_batch_rate_limit_leaves_status_available(archive_client, monkeypa
 
 
 async def test_storage_failure_cannot_acknowledge(archive_client, monkeypatch, hass):
-    def fail_commit(self, batch):
+    def fail_commit(self, batch, uploader_secret, expected_owner_generation=None):
         raise sqlite3.OperationalError("private health value")
 
     monkeypatch.setattr(ArchiveStore, "commit_batch", fail_commit)

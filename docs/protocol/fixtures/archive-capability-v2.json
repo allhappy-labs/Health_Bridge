@@ -3,14 +3,18 @@
     "request_type": "archive_capability",
     "protocol_version": 2,
     "request_id": "request-capability-001",
-    "user_id": "person-1"
+    "user_id": "person-1",
+    "uploader_credential": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
   },
   "response": {
     "ok": true,
     "request_type": "archive_capability",
     "protocol_version": 2,
     "request_id": "request-capability-001",
-    "archive_schema_version": 2,
+    "archive_schema_version": 3,
+    "ownership_contract_version": 1,
+    "owner_state": "active",
+    "owner_generation": 1,
     "max_batch_bytes": 262144,
     "max_samples_per_batch": 200,
     "max_deletions_per_batch": 200,

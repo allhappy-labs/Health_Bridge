@@ -3,7 +3,7 @@
 from copy import deepcopy
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import sqlite3
@@ -23,6 +23,7 @@ from tests.test_archive_webhook import (
     send,
     PAL_TOKEN,
     USER,
+    SECRET,
 )
 from tests.test_archive_owner import OwnedStore
 
@@ -72,6 +73,13 @@ async def archive_client(bridge_client, bridge_entries, hass):
     hass.config_entries.async_update_entry(entry, data={**entry.data, "user_id": USER})
     await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done()
+    store = hass.data["health_bridge"]["archive_store"]
+    claim = await hass.async_add_executor_job(
+        store.claim_owner, USER, SECRET, datetime.now(timezone.utc)
+    )
+    await hass.async_add_executor_job(
+        store.approve_owner, USER, claim.claim_id, datetime.now(timezone.utc)
+    )
     return bridge_client
 
 
@@ -146,6 +154,7 @@ def test_stale_conditional_delete_rolls_back_all_state_and_retry_is_exact(store)
             samples=[],
             deletions=[payload()["samples"][0]["uuid"]],
             expected_inventory_revision=revision,
+            expected_owner_generation=1,
         ),
         limits=ArchiveLimits(),
     )
@@ -180,6 +189,7 @@ def test_two_concurrent_conditional_deletes_cannot_share_revision(store):
                 samples=[],
                 deletions=[samples[index]["uuid"]],
                 expected_inventory_revision=1,
+                expected_owner_generation=1,
             ),
             limits=ArchiveLimits(),
         )
@@ -287,6 +297,7 @@ async def test_inventory_route_and_stale_delete_error(archive_client):
         "request_id": "control-1",
         "sample_ids": [payload()["samples"][0]["uuid"]],
         "revision": 1,
+        "owner_generation": 1,
         "next_cursor": None,
     }
     assert (
@@ -299,6 +310,7 @@ async def test_inventory_route_and_stale_delete_error(archive_client):
             samples=[],
             deletions=page["sample_ids"],
             expected_inventory_revision=page["revision"],
+            expected_owner_generation=page["owner_generation"],
         ),
     )
     assert response.status == 409

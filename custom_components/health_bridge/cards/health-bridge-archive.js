@@ -36,6 +36,13 @@ class HealthBridgeArchive extends HTMLElement {
       <ha-card>
         <h2>Health archive</h2><p id="person"></p>
         <p class="muted">Administrator access. Original samples are separate from recorder history.</p>
+        <section id="ownership">
+          <h3>Authoritative uploader</h3>
+          <p id="owner"></p><p>Pending phone fingerprint: <code id="owner-fingerprint"></code>. Compare this with the fingerprint shown on the intended iPhone.</p>
+          <p>Approval immediately revokes the previous phone's archive access. Originals uploaded only by that phone remain archived. Make a Home Assistant backup before transfer.</p>
+          <label>Type the exact person ID <input id="owner-confirm" autocomplete="off"></label>
+          <button id="owner-approve">Approve uploader…</button><button id="owner-reject">Reject claim…</button>
+        </section>
         <div class="filters">
           <label>Sample type <select id="type"></select></label>
           <label>From (UTC, inclusive) <input id="start" type="date"></label>
@@ -66,6 +73,8 @@ class HealthBridgeArchive extends HTMLElement {
       this._notice("Failed statistics queued for retry; visibility is not yet confirmed.");
     });
     this._el("delete").onclick = () => this._run(() => this._delete());
+    this._el("owner-approve").onclick = () => this._run(() => this._ownerAction("APPROVE"));
+    this._el("owner-reject").onclick = () => this._run(() => this._ownerAction("REJECT"));
     this._el("export").onclick = () => this._run(() => this._export());
     for (const name of ["type", "start", "end"]) {
       this._el(name).onchange = () => {
@@ -82,6 +91,41 @@ class HealthBridgeArchive extends HTMLElement {
   _notice(message) { this._el("notice").textContent = message; }
   _path(operation) { return `health_bridge/archive/${encodeURIComponent(this._config.user_id)}/${operation}`; }
   _api(operation, method = "GET", body) { return this._hass.callApi(method, this._path(operation), body); }
+
+  async _ownerStatus() {
+    const status = await this._api("owner");
+    this._pendingOwner = status.pending_claim;
+    this._ownerGeneration = status.owner_generation;
+    const transfer = status.owner_generation > 0;
+    this._el("owner").textContent = status.pending_claim
+      ? `${transfer ? "Transfer" : "First approval"} pending for this person. Current generation: ${status.owner_generation}.`
+      : `No pending claim. Current generation: ${status.owner_generation}.`;
+    this._el("owner-fingerprint").textContent = status.pending_claim?.fingerprint || "none";
+    if (this._el("owner-approve")) this._el("owner-approve").disabled = !status.pending_claim;
+    if (this._el("owner-reject")) this._el("owner-reject").disabled = !status.pending_claim;
+  }
+
+  _confirmOwner(action) {
+    const transfer = this._ownerGeneration > 0;
+    return window.confirm(action === "APPROVE"
+      ? `Approve this uploader for ${this._config.user_id}? ${transfer ? "The previous phone immediately loses archive access. " : ""}Old-phone-only originals remain archived. Make a Home Assistant backup before transfer.`
+      : `Reject the pending uploader claim for ${this._config.user_id}?`);
+  }
+
+  async _ownerAction(action) {
+    const claim = this._pendingOwner;
+    if (!claim || this._el("owner-confirm").value !== this._config.user_id) {
+      this._notice("Type the exact person ID before changing uploader ownership.");
+      return;
+    }
+    if (!this._confirmOwner(action)) return;
+    await this._api(action === "APPROVE" ? "owner-approve" : "owner-reject", "POST", {
+      claim_id: claim.claim_id, confirm_user_id: this._config.user_id, confirm: action,
+    });
+    this._el("owner-confirm").value = "";
+    await this._ownerStatus();
+    this._notice(action === "APPROVE" ? "Uploader approved. Previous phone archive access has ended." : "Pending uploader claim rejected.");
+  }
 
   _start() {
     this._ready = true;
@@ -103,6 +147,8 @@ class HealthBridgeArchive extends HTMLElement {
       this._busy = false;
       this.shadowRoot.querySelectorAll("button,input,select").forEach(el => { el.disabled = false; });
       this._el("next").disabled = !this._cursor;
+      this._el("owner-approve").disabled = !this._pendingOwner;
+      this._el("owner-reject").disabled = !this._pendingOwner;
     }
   }
 
@@ -153,7 +199,7 @@ class HealthBridgeArchive extends HTMLElement {
   async _load(next) {
     const generation = this._generation;
     this._notice("Reading archive…");
-    if (!next) { this._cursor = null; await this._status(); }
+    if (!next) { this._cursor = null; await this._ownerStatus(); await this._status(); }
     if (generation !== this._generation) return;
     const params = this._params();
     if (next && this._cursor) params.set("cursor", this._cursor);
@@ -167,7 +213,7 @@ class HealthBridgeArchive extends HTMLElement {
       const sleep = ["In bed", "Asleep (unspecified)", "Awake", "Core sleep", "Deep sleep", "REM sleep"];
       const category = params.get("sample_type") === "HKCategoryTypeIdentifierSleepAnalysis" ? `Sleep: ${sleep[payload.value] || payload.value}` : params.get("sample_type") === "HKCategoryTypeIdentifierMindfulSession" ? "Mindful session" : `Category: ${payload.value}`;
       const summary = payload.kind === "quantity" ? `${payload.canonical_value} ${payload.canonical_unit}` : payload.kind === "workout" ? `Workout: ${payload.activity_type}; ${payload.duration_seconds}s` : category;
-      button.textContent = `${sample.start} – ${sample.end}: ${summary}`;
+      button.textContent = `${sample.start} – ${sample.end}: ${summary} (uploader generation ${sample.owner_generation})`;
       button.onclick = () => this._run(async () => {
         const detail = await this._api(`sample?${new URLSearchParams({sample_type: params.get("sample_type"), uuid: sample.uuid})}`);
         if (generation === this._generation) this._el("detail").textContent = JSON.stringify(detail.sample, null, 2);

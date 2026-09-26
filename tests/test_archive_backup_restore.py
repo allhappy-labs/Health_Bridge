@@ -30,17 +30,26 @@ def seeded(tmp_path):
     (tmp_path / ".storage").mkdir(exist_ok=True)
     path = tmp_path / ".storage/health_bridge_archive.sqlite"
     store = OwnedStore(ArchiveStore.open(path))
-    payload = json.loads(Path("docs/protocol/fixtures/archive-batch-v2.json").read_text())
+    payload = json.loads(
+        Path("docs/protocol/fixtures/archive-batch-v2.json").read_text()
+    )
     original = deepcopy(payload["samples"][0])
     deleted = deepcopy(original)
     deleted["uuid"] = "bd085ccc-22f4-4e80-a865-149bb5b0d1d5"
     payload["samples"].append(deleted)
     first = validate_archive_request(payload, limits=ArchiveLimits())
     receipt = store.commit_batch(first)
-    payload.update(batch_id="backup-delete", request_id="backup-delete", samples=[],
-                   deletions=[deleted["uuid"]], coverage={
-                       "kind": "anchor", "anchor": "backup-anchor", "authorization_start": None,
-                   })
+    payload.update(
+        batch_id="backup-delete",
+        request_id="backup-delete",
+        samples=[],
+        deletions=[deleted["uuid"]],
+        coverage={
+            "kind": "anchor",
+            "anchor": "backup-anchor",
+            "authorization_start": None,
+        },
+    )
     store.commit_batch(validate_archive_request(payload, limits=ArchiveLimits()))
     return store, path, first, receipt, original, deleted
 
@@ -71,43 +80,73 @@ def test_checkpoint_copy_restores_all_durable_state(seeded, tmp_path):
         key: value for key, value in original.items() if key not in {"start", "end"}
     }
     for key in ("start", "end"):
-        assert datetime.fromisoformat(detail[key]) == datetime.fromisoformat(original[key])
-    assert restored.sample_detail("person-1", first.sample_type, deleted["uuid"]) is None
+        assert datetime.fromisoformat(detail[key]) == datetime.fromisoformat(
+            original[key]
+        )
+    assert (
+        restored.sample_detail("person-1", first.sample_type, deleted["uuid"]) is None
+    )
     assert restored.tombstone_page("person-1", first.sample_type) == (
         {"uuid": deleted["uuid"], "batch_id": "backup-delete"},
     )
     assert restored.commit_batch(first) == receipt
-    query = ArchiveQuery("person-1", first.sample_type,
-                         datetime(2024, 1, 1, tzinfo=timezone.utc),
-                         datetime(2024, 1, 2, tzinfo=timezone.utc))
-    assert [sample.uuid for sample in restored.query_samples(query).samples] == [original["uuid"]]
+    query = ArchiveQuery(
+        "person-1",
+        first.sample_type,
+        datetime(2024, 1, 1, tzinfo=timezone.utc),
+        datetime(2024, 1, 2, tzinfo=timezone.utc),
+    )
+    assert [sample.uuid for sample in restored.query_samples(query).samples] == [
+        original["uuid"]
+    ]
     with sqlite3.connect(restored_path) as db:
         assert db.execute("PRAGMA user_version").fetchone() == (3,)
-        assert db.execute("SELECT user_id, sample_type, revision FROM inventory_revisions").fetchall() == [
+        assert db.execute(
+            "SELECT user_id, sample_type, revision FROM inventory_revisions"
+        ).fetchall() == [
             ("person-1", first.sample_type, 2),
         ]
         assert db.execute("PRAGMA integrity_check").fetchone() == ("ok",)
         assert db.execute("PRAGMA foreign_key_check").fetchall() == []
         assert db.execute("SELECT count(*) FROM receipts").fetchone() == (2,)
-        assert db.execute("SELECT kind, anchor FROM coverage_intervals ORDER BY rowid").fetchall() == [
-            ("interval", None), ("anchor", "backup-anchor"),
+        assert db.execute(
+            "SELECT kind, anchor FROM coverage_intervals ORDER BY rowid"
+        ).fetchall() == [
+            ("interval", None),
+            ("anchor", "backup-anchor"),
         ]
-        assert db.execute("SELECT state, attempts, last_error FROM projection_jobs").fetchall() == [
+        assert db.execute(
+            "SELECT state, attempts, last_error FROM projection_jobs"
+        ).fetchall() == [
             ("pending", 2, "retry"),
         ]
     jobs = restored.claim_projection_jobs(10)
     assert len(jobs) == 1
     assert jobs[0].attempts == 3
     restored.complete_projection_job(jobs[0].job_id)
-    assert restored.projection_status("person-1")[first.sample_type] == ("current", None)
+    assert restored.projection_status("person-1")[first.sample_type] == (
+        "current",
+        None,
+    )
     assert store.commit_batch(first) == receipt  # Writes resume after backup.
-    inventory_query = ArchiveInventoryQuery(query.user_id, query.sample_type, query.start, query.end)
-    assert restored.inventory_page(inventory_query) == store.inventory_page(inventory_query)
+    inventory_query = ArchiveInventoryQuery(
+        query.user_id, query.sample_type, query.start, query.end
+    )
+    assert restored.inventory_page(inventory_query) == store.inventory_page(
+        inventory_query
+    )
 
     stale = json.loads(Path("docs/protocol/fixtures/archive-batch-v2.json").read_text())
     stale.update(batch_id="stale-rescan", request_id="stale-rescan", samples=[deleted])
-    assert restored.commit_batch(validate_archive_request(stale, limits=ArchiveLimits())).committed_samples == 0
-    assert restored.sample_detail("person-1", first.sample_type, deleted["uuid"]) is None
+    assert (
+        restored.commit_batch(
+            validate_archive_request(stale, limits=ArchiveLimits())
+        ).committed_samples
+        == 0
+    )
+    assert (
+        restored.sample_detail("person-1", first.sample_type, deleted["uuid"]) is None
+    )
 
 
 def test_busy_checkpoint_aborts_backup_without_disabling_store(seeded):
@@ -127,7 +166,9 @@ def test_busy_checkpoint_aborts_backup_without_disabling_store(seeded):
 
 async def test_ha_backup_hooks_checkpoint_and_release(hass, tmp_path):
     backup = importlib.import_module("custom_components.health_bridge.backup")
-    store = await hass.async_add_executor_job(ArchiveStore.open, tmp_path / "archive.sqlite")
+    store = await hass.async_add_executor_job(
+        ArchiveStore.open, tmp_path / "archive.sqlite"
+    )
     hass.data["health_bridge"] = {"archive_store": store}
     await backup.async_pre_backup(hass)
     with pytest.raises(ArchiveStoreError, match="backup_in_progress"):
@@ -144,8 +185,20 @@ async def test_entry_reload_cannot_bypass_backup_fence(
     bridge_client, bridge_entries, hass, tmp_path
 ):
     backup = importlib.import_module("custom_components.health_bridge.backup")
-    payload = json.loads(Path("docs/protocol/fixtures/archive-batch-v2.json").read_text())
+    payload = json.loads(
+        Path("docs/protocol/fixtures/archive-batch-v2.json").read_text()
+    )
     payload["token"] = "health-assistant-compatibility-token-00001"
+    store = hass.data["health_bridge"]["archive_store"]
+    claim = await hass.async_add_executor_job(
+        store.claim_owner,
+        "person-1",
+        payload["uploader_credential"],
+        datetime.now(timezone.utc),
+    )
+    await hass.async_add_executor_job(
+        store.approve_owner, "person-1", claim.claim_id, datetime.now(timezone.utc)
+    )
     response = await bridge_client.post("/api/webhook/health_bridge", json=payload)
     assert response.status == 200
     original_store = hass.data["health_bridge"]["archive_store"]
@@ -160,30 +213,49 @@ async def test_entry_reload_cannot_bypass_backup_fence(
         assert hass.data["health_bridge"]["archive_store"] is original_store
         copied = tmp_path / "reload-backup.sqlite"
         await hass.async_add_executor_job(
-            shutil.copy2, hass.config.path(".storage", "health_bridge_archive.sqlite"), copied
+            shutil.copy2,
+            hass.config.path(".storage", "health_bridge_archive.sqlite"),
+            copied,
         )
         restored = await hass.async_add_executor_job(ArchiveStore.open, copied)
-        assert await hass.async_add_executor_job(
-            restored.sample_detail, "person-1", payload["sample_type"],
-            "bd085ccc-22f4-4e80-a865-149bb5b0d1d4",
-        ) is not None
-        assert await hass.async_add_executor_job(
-            restored.sample_detail, "person-1", payload["sample_type"],
-            "bd085ccc-22f4-4e80-a865-149bb5b0d1d5",
-        ) is None
+        assert (
+            await hass.async_add_executor_job(
+                restored.sample_detail,
+                "person-1",
+                payload["sample_type"],
+                "bd085ccc-22f4-4e80-a865-149bb5b0d1d4",
+            )
+            is not None
+        )
+        assert (
+            await hass.async_add_executor_job(
+                restored.sample_detail,
+                "person-1",
+                payload["sample_type"],
+                "bd085ccc-22f4-4e80-a865-149bb5b0d1d5",
+            )
+            is None
+        )
     finally:
         await backup.async_post_backup(hass)
     response = await bridge_client.post("/api/webhook/health_bridge", json=payload)
     assert response.status == 200
     assert (await response.json())["committed_samples"] == 1
-    assert await hass.async_add_executor_job(
-        original_store.sample_detail, "person-1", payload["sample_type"],
-        "bd085ccc-22f4-4e80-a865-149bb5b0d1d5",
-    ) is not None
+    assert (
+        await hass.async_add_executor_job(
+            original_store.sample_detail,
+            "person-1",
+            payload["sample_type"],
+            "bd085ccc-22f4-4e80-a865-149bb5b0d1d5",
+        )
+        is not None
+    )
 
 
 @pytest.mark.parametrize("include_recorder", [False, True])
-async def test_real_ha_backup_engine_includes_archive(hass, seeded, tmp_path, include_recorder):
+async def test_real_ha_backup_engine_includes_archive(
+    hass, seeded, tmp_path, include_recorder
+):
     from homeassistant.components.backup.manager import CoreBackupReaderWriter
 
     backup = importlib.import_module("custom_components.health_bridge.backup")
@@ -194,7 +266,10 @@ async def test_real_ha_backup_engine_includes_archive(hass, seeded, tmp_path, in
     try:
         artifact, size = await hass.async_add_executor_job(
             writer._mkdir_and_generate_backup_contents,
-            {"slug": "archive-test", "version": 2}, include_recorder, None, None,
+            {"slug": "archive-test", "version": 2},
+            include_recorder,
+            None,
+            None,
         )
     finally:
         await backup.async_post_backup(hass)
@@ -202,9 +277,19 @@ async def test_real_ha_backup_engine_includes_archive(hass, seeded, tmp_path, in
 
     def restore():
         with tarfile.open(artifact) as outer:
-            member = next(item for item in outer.getmembers() if item.name.endswith("homeassistant.tar.gz"))
-            with tarfile.open(fileobj=io.BytesIO(outer.extractfile(member).read())) as inner:
-                member = next(item for item in inner.getmembers() if item.name.endswith(".storage/health_bridge_archive.sqlite"))
+            member = next(
+                item
+                for item in outer.getmembers()
+                if item.name.endswith("homeassistant.tar.gz")
+            )
+            with tarfile.open(
+                fileobj=io.BytesIO(outer.extractfile(member).read())
+            ) as inner:
+                member = next(
+                    item
+                    for item in inner.getmembers()
+                    if item.name.endswith(".storage/health_bridge_archive.sqlite")
+                )
                 path = tmp_path / "from-ha-backup.sqlite"
                 path.write_bytes(inner.extractfile(member).read())
         with sqlite3.connect(path) as db:
@@ -213,7 +298,11 @@ async def test_real_ha_backup_engine_includes_archive(hass, seeded, tmp_path, in
             assert db.execute("SELECT count(*) FROM samples").fetchone() == (1,)
             assert db.execute("SELECT count(*) FROM tombstones").fetchone() == (1,)
             assert db.execute("SELECT count(*) FROM receipts").fetchone() == (2,)
-            assert db.execute("SELECT count(*) FROM coverage_intervals").fetchone() == (2,)
-            assert db.execute("SELECT state FROM projection_jobs").fetchall() == [("pending",)]
+            assert db.execute("SELECT count(*) FROM coverage_intervals").fetchone() == (
+                2,
+            )
+            assert db.execute("SELECT state FROM projection_jobs").fetchall() == [
+                ("pending",)
+            ]
 
     await hass.async_add_executor_job(restore)

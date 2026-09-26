@@ -1,6 +1,7 @@
 """Authenticated archive HTTP contracts against real SQLite and HA routes."""
 
 from copy import deepcopy
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import sqlite3
@@ -20,6 +21,8 @@ PARAMS = {
     "start": "2024-01-01T00:00:00Z",
     "end": "2025-01-01T00:00:00Z",
 }
+SECRET = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+OTHER_SECRET = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE"
 
 
 @pytest.fixture
@@ -31,6 +34,12 @@ async def api(bridge_entries, hass, hass_client):
         ).read_text()
     )
     for user in ("person-1", "person-2"):
+        claim = await hass.async_add_executor_job(
+            store.claim_owner, user, SECRET, datetime.now(timezone.utc)
+        )
+        await hass.async_add_executor_job(
+            store.approve_owner, user, claim.claim_id, datetime.now(timezone.utc)
+        )
         batch = deepcopy(original)
         batch["user_id"] = user
         batch["samples"] = [
@@ -39,7 +48,9 @@ async def api(bridge_entries, hass, hass_client):
         ]
         batch["deletions"] = [str(UUID(int=99))]
         await hass.async_add_executor_job(
-            store.commit_batch, validate_archive_request(batch, limits=ArchiveLimits())
+            store.commit_batch,
+            validate_archive_request(batch, limits=ArchiveLimits()),
+            SECRET,
         )
     return await hass_client()
 
@@ -49,6 +60,52 @@ async def test_data_requires_ha_auth(bridge_entries, hass_client_no_auth, operat
     client = await hass_client_no_auth()
     response = await client.get(f"{BASE}/{operation}", params=PARAMS)
     assert response.status == 401
+
+
+async def test_admin_owner_claim_fingerprint_approval_and_transfer(api, hass):
+    store = hass.data["health_bridge"]["archive_store"]
+    claim = await hass.async_add_executor_job(
+        store.claim_owner, "person-1", OTHER_SECRET, datetime.now(timezone.utc)
+    )
+    owner = await api.get(f"{BASE}/owner")
+    assert owner.status == 200
+    body = await owner.json()
+    assert body["pending_claim"]["fingerprint"] == claim.fingerprint
+    assert body["owner_generation"] == 1
+    bad = await api.post(
+        f"{BASE}/owner-approve",
+        json={
+            "claim_id": claim.claim_id,
+            "confirm_user_id": "person-2",
+            "confirm": "APPROVE",
+        },
+    )
+    assert bad.status == 400
+    approved = await api.post(
+        f"{BASE}/owner-approve",
+        json={
+            "claim_id": claim.claim_id,
+            "confirm_user_id": "person-1",
+            "confirm": "APPROVE",
+        },
+    )
+    assert approved.status == 200
+    assert (await approved.json())["owner_generation"] == 2
+    owner = await api.get(f"{BASE}/owner")
+    assert (await owner.json())["pending_claim"] is None
+
+
+async def test_non_admin_cannot_approve_owner(api, hass_admin_user):
+    hass_admin_user.groups = []
+    response = await api.post(
+        f"{BASE}/owner-approve",
+        json={
+            "claim_id": "11111111-1111-1111-1111-111111111111",
+            "confirm_user_id": "person-1",
+            "confirm": "APPROVE",
+        },
+    )
+    assert response.status == 403
 
 
 @pytest.mark.parametrize(
@@ -72,6 +129,7 @@ async def test_range_keyset_ties_scope_and_detail(api):
     assert response.headers["Cache-Control"] == "no-store"
     first = await response.json()
     assert [s["uuid"] for s in first["samples"]] == [str(UUID(int=1)), str(UUID(int=2))]
+    assert {s["owner_generation"] for s in first["samples"]} == {1}
     response = await api.get(
         f"{BASE}/samples",
         params={**PARAMS, "limit": "2", "cursor": first["next_cursor"]},
@@ -93,7 +151,9 @@ async def test_range_keyset_ties_scope_and_detail(api):
     response = await api.get(
         f"{BASE}/sample", params={"sample_type": TYPE, "uuid": str(UUID(int=1))}
     )
-    assert (await response.json())["sample"]["payload"]["raw_value"] == 12
+    detail = (await response.json())["sample"]
+    assert detail["payload"]["raw_value"] == 12
+    assert detail["owner_generation"] == 1
     response = await api.get(
         f"{BASE.replace('person-1', 'absent')}/sample",
         params={"sample_type": TYPE, "uuid": str(UUID(int=1))},
@@ -132,6 +192,9 @@ async def test_export_is_versioned_jsonl_with_scoped_tombstones(api):
     assert [r["sample"]["uuid"] for r in rows if r["kind"] == "sample"] == [
         str(UUID(int=i)) for i in range(1, 5)
     ]
+    assert {r["sample"]["owner_generation"] for r in rows if r["kind"] == "sample"} == {
+        1
+    }
     assert [r["uuid"] for r in rows if r["kind"] == "tombstone"] == [str(UUID(int=99))]
     assert all(r.get("user_id", "person-1") == "person-1" for r in rows)
 
@@ -195,7 +258,7 @@ async def test_export_reads_bounded_pages_and_midstream_errors_cannot_claim_comp
     api, hass, monkeypatch, caplog
 ):
     store = hass.data["health_bridge"]["archive_store"]
-    original = store.query_samples
+    original = store.query_samples_with_provenance
     calls = []
 
     def query(request):
@@ -204,7 +267,7 @@ async def test_export_reads_bounded_pages_and_midstream_errors_cannot_claim_comp
             raise sqlite3.OperationalError("private-health-detail")
         return original(request)
 
-    monkeypatch.setattr(store, "query_samples", query)
+    monkeypatch.setattr(store, "query_samples_with_provenance", query)
     response = await api.get(f"{BASE}/export", params={**PARAMS, "limit": "2"})
     body = await response.text()
     rows = [json.loads(line) for line in body.splitlines()]
@@ -219,7 +282,9 @@ async def test_storage_error_redacts_values_and_logs(api, hass, monkeypatch, cap
         raise sqlite3.OperationalError("sensitive-health-value token-secret")
 
     monkeypatch.setattr(
-        hass.data["health_bridge"]["archive_store"], "query_samples", fail
+        hass.data["health_bridge"]["archive_store"],
+        "query_samples_with_provenance",
+        fail,
     )
     response = await api.get(f"{BASE}/samples", params=PARAMS)
     assert response.status == 503

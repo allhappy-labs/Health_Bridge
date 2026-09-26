@@ -6,6 +6,10 @@ from pathlib import Path
 
 import pytest
 
+from custom_components.health_bridge.archive_protocol import ArchiveProtocolError
+
+SECRET = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+
 
 FIXTURES = Path(__file__).parents[1] / "docs/protocol/fixtures"
 
@@ -16,6 +20,7 @@ def request(request_type="archive_batch"):
         "protocol_version": 2,
         "request_id": "request-001",
         "user_id": "person-1",
+        "uploader_credential": SECRET,
     }
     if request_type == "archive_batch":
         base.update(
@@ -54,6 +59,43 @@ def request(request_type="archive_batch"):
             }
         )
     return base
+
+
+def test_owner_proof_and_generation_are_strict_wire_fields():
+    claim = parse(request("archive_owner_claim"))
+    assert claim.uploader_credential == SECRET
+    batch = request()
+    batch["samples"] = []
+    batch["deletions"] = ["bd085ccc-22f4-4e80-a865-149bb5b0d1d4"]
+    batch["expected_inventory_revision"] = 2
+    batch["expected_owner_generation"] = 1
+    assert parse(batch).expected_owner_generation == 1
+    for bad in (None, "short", "A" * 42 + "="):
+        invalid = request("archive_capability")
+        if bad is None:
+            del invalid["uploader_credential"]
+        else:
+            invalid["uploader_credential"] = bad
+        with pytest.raises(ArchiveProtocolError):
+            parse(invalid)
+    batch["expected_owner_generation"] = True
+    with pytest.raises(ArchiveProtocolError):
+        parse(batch)
+
+
+def test_capability_rejects_malformed_owner_fields():
+    from custom_components.health_bridge.archive_protocol import ArchiveCapability
+
+    response = json.loads((FIXTURES / "archive-capability-v2.json").read_text())[
+        "response"
+    ]
+    for changes in (
+        {"owner_state": []},
+        {"owner_generation": True},
+        {"ownership_contract_version": 0},
+    ):
+        with pytest.raises(ArchiveProtocolError):
+            ArchiveCapability.from_dict({**response, **changes})
 
 
 def parse(payload, **limit_changes):

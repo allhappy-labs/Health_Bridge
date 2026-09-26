@@ -1,0 +1,37 @@
+{
+  "request": {
+    "request_type": "archive_owner_claim",
+    "protocol_version": 2,
+    "request_id": "request-owner-001",
+    "user_id": "person-1",
+    "uploader_credential": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+  },
+  "response": {
+    "ok": true,
+    "request_type": "archive_owner_claim",
+    "protocol_version": 2,
+    "request_id": "request-owner-001",
+    "ownership_contract_version": 1,
+    "owner_state": "pending",
+    "owner_generation": 0,
+    "claim_id": "11111111-1111-1111-1111-111111111111",
+    "fingerprint": "66687aadf862",
+    "expires_at": "2026-09-27T12:00:00Z"
+  },
+  "admin_owner_response": {
+    "ok": true,
+    "user_id": "person-1",
+    "owner_state": "unbound",
+    "owner_generation": 0,
+    "pending_claim": {
+      "claim_id": "11111111-1111-1111-1111-111111111111",
+      "fingerprint": "66687aadf862",
+      "expires_at": "2026-09-27T12:00:00Z"
+    }
+  },
+  "admin_approve_request": {
+    "claim_id": "11111111-1111-1111-1111-111111111111",
+    "confirm_user_id": "person-1",
+    "confirm": "APPROVE"
+  }
+}

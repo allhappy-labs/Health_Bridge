@@ -4,6 +4,7 @@
     "protocol_version": 2,
     "request_id": "request-inventory-001",
     "user_id": "person-1",
+    "uploader_credential": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
     "sample_type": "HKQuantityTypeIdentifierStepCount",
     "start": "2024-01-01T00:00:00Z",
     "end": "2024-01-02T00:00:00Z",
@@ -17,6 +18,7 @@
     "request_id": "request-inventory-001",
     "sample_ids": ["bd085ccc-22f4-4e80-a865-149bb5b0d1d4"],
     "revision": 1,
+    "owner_generation": 1,
     "next_cursor": null
   }
 }

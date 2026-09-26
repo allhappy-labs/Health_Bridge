@@ -6,7 +6,7 @@ are deliberately not accepted here. Responses never contain integration tokens.
 """
 
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import re
@@ -94,6 +94,31 @@ class ArchiveView(HomeAssistantView):
             return denied
         store = self.hass.data[DOMAIN]["archive_store"]
         try:
+            if operation == "owner":
+                now = datetime.now(timezone.utc)
+                state = await self.hass.async_add_executor_job(
+                    store.owner_status, user_id, None, now
+                )
+                claim = await self.hass.async_add_executor_job(
+                    store.pending_owner_claim, user_id, now
+                )
+                return _response(
+                    {
+                        "ok": True,
+                        "user_id": user_id,
+                        "owner_state": state.state,
+                        "owner_generation": state.generation,
+                        "pending_claim": None
+                        if claim is None
+                        else {
+                            "claim_id": claim.claim_id,
+                            "fingerprint": claim.fingerprint,
+                            "expires_at": claim.expires_at.isoformat().replace(
+                                "+00:00", "Z"
+                            ),
+                        },
+                    }
+                )
             if operation == "status":
                 return await self._status(user_id, store)
             if operation == "sample":
@@ -112,12 +137,17 @@ class ArchiveView(HomeAssistantView):
             query = _query(request, user_id)
             if operation == "export" and query.cursor is not None:
                 raise ValueError
-            page = await self.hass.async_add_executor_job(store.query_samples, query)
+            page, generations = await self.hass.async_add_executor_job(
+                store.query_samples_with_provenance, query
+            )
             if operation == "export":
-                return await self._export(request, store, query, page)
+                return await self._export(request, store, query, page, generations)
             return _response(
                 {
-                    "samples": [_wire_sample(s) for s in page.samples],
+                    "samples": [
+                        {**_wire_sample(s), "owner_generation": generation}
+                        for s, generation in zip(page.samples, generations, strict=True)
+                    ],
                     "next_cursor": page.next_cursor,
                 }
             )
@@ -133,6 +163,49 @@ class ArchiveView(HomeAssistantView):
             return denied
         data = self.hass.data[DOMAIN]
         try:
+            if operation in {"owner-approve", "owner-reject"}:
+                body = bytearray()
+                async for chunk in request.content.iter_chunked(1024):
+                    body.extend(chunk)
+                    if len(body) > 1024:
+                        return _error("invalid_confirmation", 400)
+                confirmation = json.loads(body)
+                action = "APPROVE" if operation == "owner-approve" else "REJECT"
+                claim_id = (
+                    confirmation.get("claim_id")
+                    if isinstance(confirmation, dict)
+                    else None
+                )
+                if (
+                    not isinstance(claim_id, str)
+                    or not re.fullmatch(r"[0-9a-fA-F-]{36}", claim_id)
+                    or confirmation
+                    != {
+                        "claim_id": claim_id,
+                        "confirm_user_id": user_id,
+                        "confirm": action,
+                    }
+                ):
+                    return _error("invalid_confirmation", 400)
+                store = data["archive_store"]
+                if operation == "owner-approve":
+                    state = await self.hass.async_add_executor_job(
+                        store.approve_owner,
+                        user_id,
+                        claim_id,
+                        datetime.now(timezone.utc),
+                    )
+                    return _response(
+                        {
+                            "ok": True,
+                            "owner_state": state.state,
+                            "owner_generation": state.generation,
+                        }
+                    )
+                await self.hass.async_add_executor_job(
+                    store.reject_owner, user_id, claim_id
+                )
+                return _response({"ok": True, "pending_claim": None})
             if operation == "retry":
                 await self.hass.async_add_executor_job(
                     data["archive_store"].retry_failed_projections, user_id
@@ -166,6 +239,13 @@ class ArchiveView(HomeAssistantView):
             )
         except ValueError, UnicodeError:
             return _error("invalid_confirmation", 400)
+        except ArchiveStoreError as exc:
+            return _error(
+                "claim_not_found"
+                if exc.code == "claim_not_found"
+                else "archive_unavailable",
+                404 if exc.code == "claim_not_found" else 503,
+            )
         except Exception:
             return _error("archive_unavailable", 503)
 
@@ -218,7 +298,7 @@ class ArchiveView(HomeAssistantView):
             }
         )
 
-    async def _export(self, request, store, query, page):
+    async def _export(self, request, store, query, page, generations):
         response = web.StreamResponse(
             headers={
                 **HEADERS,
@@ -248,21 +328,24 @@ class ArchiveView(HomeAssistantView):
                 }
             )
             while True:
-                for sample in page.samples:
+                for sample, generation in zip(page.samples, generations, strict=True):
                     await emit(
                         {
                             "kind": "sample",
                             "user_id": query.user_id,
                             "sample_type": query.sample_type,
-                            "sample": _wire_sample(sample),
+                            "sample": {
+                                **_wire_sample(sample),
+                                "owner_generation": generation,
+                            },
                         }
                     )
                     samples += 1
                 if page.next_cursor is None:
                     break
                 query = replace(query, cursor=page.next_cursor)
-                page = await self.hass.async_add_executor_job(
-                    store.query_samples, query
+                page, generations = await self.hass.async_add_executor_job(
+                    store.query_samples_with_provenance, query
                 )
             after = ""
             while rows := await self.hass.async_add_executor_job(

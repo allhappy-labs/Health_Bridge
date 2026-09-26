@@ -15,6 +15,8 @@ from typing import Any
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from .archive_owner import credential_digest
+
 
 ARCHIVE_PROTOCOL_VERSION = 2
 ARCHIVE_SCHEMA_VERSION = 3
@@ -26,7 +28,13 @@ _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
 _TYPE = re.compile(r"HK(?:Quantity|Category)TypeIdentifier[A-Za-z0-9]{1,96}\Z")
 _UTC = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z\Z")
 _REQUEST_TYPES = frozenset(
-    {"archive_capability", "archive_batch", "archive_status", "archive_inventory"}
+    {
+        "archive_capability",
+        "archive_owner_claim",
+        "archive_batch",
+        "archive_status",
+        "archive_inventory",
+    }
 )
 _STATES = frozenset({"pending", "current", "failed"})
 
@@ -163,6 +171,8 @@ class ArchiveBatch:
     deletions: tuple[str, ...] = ()
     expected_inventory_revision: int | None = None
     inventory_query: ArchiveInventoryQuery | None = None
+    uploader_credential: str = ""
+    expected_owner_generation: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,6 +186,12 @@ class ArchiveCapability:
     supported_metrics: tuple[str, ...]
     archive_available: bool
     statistics_available: bool
+    ownership_contract_version: int = 1
+    owner_state: str = "unbound"
+    owner_generation: int = 0
+    claim_id: str | None = None
+    fingerprint: str | None = None
+    expires_at: str | None = None
 
     @classmethod
     def from_dict(cls, value: Any) -> ArchiveCapability:
@@ -195,8 +211,11 @@ class ArchiveCapability:
                 "supported_metrics",
                 "archive_available",
                 "statistics_available",
+                "ownership_contract_version",
+                "owner_state",
+                "owner_generation",
             },
-            set(),
+            {"claim_id", "fingerprint", "expires_at"},
             "invalid_response",
             "capability",
         )
@@ -215,6 +234,16 @@ class ArchiveCapability:
             obj["statistics_available"], bool
         ):
             raise ArchiveProtocolError("invalid_response", "availability")
+        state = _owner_state(obj["owner_state"])
+        if state == "pending":
+            _id(obj.get("claim_id"), "claim_id", "invalid_response")
+            if not isinstance(obj.get("fingerprint"), str) or not re.fullmatch(
+                r"[0-9a-f]{12}", obj["fingerprint"]
+            ):
+                raise ArchiveProtocolError("invalid_response", "fingerprint")
+            _date(obj.get("expires_at"), "invalid_response", "expires_at")
+        elif any(key in obj for key in ("claim_id", "fingerprint", "expires_at")):
+            raise ArchiveProtocolError("invalid_response", "owner_state")
         return cls(
             request_id=_id(obj["request_id"], "request_id", "invalid_response"),
             archive_schema_version=_positive_int(
@@ -237,10 +266,18 @@ class ArchiveCapability:
             supported_metrics=metrics,
             archive_available=obj["archive_available"],
             statistics_available=obj["statistics_available"],
+            ownership_contract_version=_positive_int(
+                obj["ownership_contract_version"], "ownership_contract_version"
+            ),
+            owner_state=state,
+            owner_generation=_generation(obj["owner_generation"]),
+            claim_id=obj.get("claim_id"),
+            fingerprint=obj.get("fingerprint"),
+            expires_at=obj.get("expires_at"),
         )
 
     def as_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "ok": True,
             "request_type": "archive_capability",
             "protocol_version": 2,
@@ -253,7 +290,17 @@ class ArchiveCapability:
             "supported_metrics": list(self.supported_metrics),
             "archive_available": self.archive_available,
             "statistics_available": self.statistics_available,
+            "ownership_contract_version": self.ownership_contract_version,
+            "owner_state": self.owner_state,
+            "owner_generation": self.owner_generation,
         }
+        if self.owner_state == "pending":
+            result.update(
+                claim_id=self.claim_id,
+                fingerprint=self.fingerprint,
+                expires_at=self.expires_at,
+            )
+        return result
 
 
 @dataclass(frozen=True, slots=True)
@@ -410,10 +457,12 @@ def validate_archive_request(payload: Any, *, limits: ArchiveLimits) -> ArchiveB
         raise ArchiveProtocolError("invalid_request", "payload") from exc
     if size > limits.max_batch_bytes:
         raise ArchiveProtocolError("limit_exceeded", "payload")
-    return validate_archive_fields(obj, limits=limits)
+    return validate_archive_fields(obj, limits=limits, require_credential=True)
 
 
-def validate_archive_fields(payload: Any, *, limits: ArchiveLimits) -> ArchiveBatch:
+def validate_archive_fields(
+    payload: Any, *, limits: ArchiveLimits, require_credential: bool = False
+) -> ArchiveBatch:
     """Validate field structure and bounds after the transport size check.
 
     Internal storage callers use this to revalidate normalized dataclasses:
@@ -439,9 +488,14 @@ def validate_archive_fields(payload: Any, *, limits: ArchiveLimits) -> ArchiveBa
             if request_type == "archive_inventory"
             else set()
         ),
-        {"token", "expected_inventory_revision"}
+        {
+            "token",
+            "uploader_credential",
+            "expected_inventory_revision",
+            "expected_owner_generation",
+        }
         if request_type == "archive_batch"
-        else {"token"},
+        else {"token", "uploader_credential"},
         "invalid_request",
         "payload",
     )
@@ -451,6 +505,16 @@ def validate_archive_fields(payload: Any, *, limits: ArchiveLimits) -> ArchiveBa
         )
     request_id = _id(obj["request_id"], "request_id")
     user_id = _id(obj["user_id"], "user_id")
+    secret = obj.get("uploader_credential", "")
+    if require_credential and "uploader_credential" not in obj:
+        raise ArchiveProtocolError("owner_required", "uploader_credential")
+    if require_credential or "uploader_credential" in obj:
+        try:
+            credential_digest(secret)
+        except ValueError as exc:
+            raise ArchiveProtocolError(
+                "invalid_request", "uploader_credential"
+            ) from exc
     if request_type == "archive_inventory":
         sample_type = _sample_type(obj["sample_type"], "sample_type")
         start = _date(obj["start"], "invalid_request", "start")
@@ -470,9 +534,12 @@ def validate_archive_fields(payload: Any, *, limits: ArchiveLimits) -> ArchiveBa
             inventory_query=ArchiveInventoryQuery(
                 user_id, sample_type, start, end, limit, cursor
             ),
+            uploader_credential=secret,
         )
     if request_type != "archive_batch":
-        return ArchiveBatch(request_type, 2, request_id, user_id)
+        return ArchiveBatch(
+            request_type, 2, request_id, user_id, uploader_credential=secret
+        )
 
     batch_id = _id(obj["batch_id"], "batch_id")
     sample_type = _sample_type(obj["sample_type"], "sample_type")
@@ -501,6 +568,15 @@ def validate_archive_fields(payload: Any, *, limits: ArchiveLimits) -> ArchiveBa
         or not deletions
     ):
         raise ArchiveProtocolError("invalid_request", "expected_inventory_revision")
+    generation = obj.get("expected_owner_generation")
+    if "expected_owner_generation" in obj and (
+        type(generation) is not int
+        or not 0 <= generation <= 9_223_372_036_854_775_807
+        or revision is None
+    ):
+        raise ArchiveProtocolError("invalid_request", "expected_owner_generation")
+    if require_credential and revision is not None and generation is None:
+        raise ArchiveProtocolError("invalid_request", "expected_owner_generation")
     return ArchiveBatch(
         request_type,
         2,
@@ -512,7 +588,26 @@ def validate_archive_fields(payload: Any, *, limits: ArchiveLimits) -> ArchiveBa
         samples,
         deletions,
         revision,
+        uploader_credential=secret,
+        expected_owner_generation=generation,
     )
+
+
+def _generation(value: Any) -> int:
+    if type(value) is not int or not 0 <= value <= 9_223_372_036_854_775_807:
+        raise ArchiveProtocolError("invalid_response", "owner_generation")
+    return value
+
+
+def _owner_state(value: Any) -> str:
+    if not isinstance(value, str) or value not in {
+        "unbound",
+        "pending",
+        "active",
+        "not_owner",
+    }:
+        raise ArchiveProtocolError("invalid_response", "owner_state")
+    return value
 
 
 def _object(value: Any, code: str, field: str) -> dict[str, Any]:

@@ -62,8 +62,35 @@ test("category timeline labels mindful sessions separately from sleep", async ()
     card._el = id => id === "timeline" ? timeline : {};
     card._params = () => new URLSearchParams({sample_type: type});
     card._status = async () => {};
-    card._api = async () => ({samples: [{uuid: "sample", start: "2024-01-01T00:00:00Z", end: "2024-01-01T00:10:00Z", payload: {kind: "category", value: 0}}], next_cursor: null});
+    card._api = async () => ({samples: [{uuid: "sample", start: "2024-01-01T00:00:00Z", end: "2024-01-01T00:10:00Z", owner_generation: 1, payload: {kind: "category", value: 0}}], next_cursor: null});
     await card._load(false);
-    assert.ok(timeline.children[0].children[0].textContent.endsWith(expected));
+    assert.ok(timeline.children[0].children[0].textContent.includes(expected));
+    assert.ok(timeline.children[0].children[0].textContent.endsWith("uploader generation 1)"));
   }
+});
+
+test("owner approval requires matching fingerprint and explicit transfer confirmation", async () => {
+  const {card, outcome} = cardFor([]);
+  const elements = {
+    "owner": {textContent: ""},
+    "owner-fingerprint": {textContent: ""},
+    "owner-confirm": {value: "person-1"},
+  };
+  card._el = id => elements[id];
+  const calls = [];
+  card._api = async (operation, method, body) => {
+    calls.push({operation, method, body});
+    if (operation === "owner") return {owner_state: "active", owner_generation: 1, pending_claim: {claim_id: "11111111-1111-1111-1111-111111111111", fingerprint: "66687aadf862"}};
+    return {ok: true};
+  };
+  await card._ownerStatus();
+  assert.match(elements["owner"].textContent, /transfer/i);
+  assert.equal(elements["owner-fingerprint"].textContent, "66687aadf862");
+  card._confirmOwner = () => false;
+  await card._ownerAction("APPROVE");
+  assert.equal(calls.length, 1);
+  card._confirmOwner = () => true;
+  await card._ownerAction("APPROVE");
+  assert.equal(calls[1].operation, "owner-approve");
+  assert.deepEqual(JSON.parse(JSON.stringify(calls[1].body)), {claim_id: "11111111-1111-1111-1111-111111111111", confirm_user_id: "person-1", confirm: "APPROVE"});
 });

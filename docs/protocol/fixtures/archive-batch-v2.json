@@ -3,6 +3,7 @@
   "protocol_version": 2,
   "request_id": "request-batch-001",
   "user_id": "person-1",
+  "uploader_credential": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
   "batch_id": "batch-001",
   "sample_type": "HKQuantityTypeIdentifierStepCount",
   "coverage": {

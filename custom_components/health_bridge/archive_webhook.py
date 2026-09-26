@@ -11,6 +11,7 @@ import math
 from pathlib import Path
 import sqlite3
 import time
+from datetime import datetime, timezone
 
 from aiohttp import web
 from homeassistant.core import HomeAssistant
@@ -30,7 +31,13 @@ from .statistic_rules import TYPE_METRICS
 
 
 ARCHIVE_REQUEST_TYPES = frozenset(
-    {"archive_capability", "archive_batch", "archive_status", "archive_inventory"}
+    {
+        "archive_capability",
+        "archive_owner_claim",
+        "archive_batch",
+        "archive_status",
+        "archive_inventory",
+    }
 )
 ARCHIVE_LIMITS = ArchiveLimits()
 ARCHIVE_BATCHES_PER_MINUTE = 60
@@ -104,7 +111,36 @@ async def async_handle_archive_request(
     try:
         batch = validate_archive_request(payload, limits=ARCHIVE_LIMITS)
     except ArchiveProtocolError as exc:
-        return archive_error(exc.code, 413 if exc.code == "limit_exceeded" else 422)
+        return archive_error(
+            exc.code,
+            413
+            if exc.code == "limit_exceeded"
+            else 403
+            if exc.code == "owner_required"
+            else 422,
+        )
+
+    if store is None:
+        if batch.request_type != "archive_capability":
+            return archive_error("archive_unavailable", 503)
+        owner = None
+    else:
+        try:
+            owner = await hass.async_add_executor_job(
+                store.owner_status,
+                batch.user_id,
+                batch.uploader_credential,
+                datetime.now(timezone.utc),
+            )
+        except ArchiveStoreError as exc:
+            return archive_error(
+                "invalid_request"
+                if exc.code == "invalid_credential"
+                else "archive_unavailable",
+                422 if exc.code == "invalid_credential" else 503,
+            )
+        except OSError, sqlite3.Error:
+            return archive_error("archive_unavailable", 503)
 
     if batch.request_type == "archive_capability":
         return web.json_response(
@@ -122,18 +158,63 @@ async def async_handle_archive_request(
                 ),
                 archive_available=store is not None,
                 statistics_available=statistics_available,
+                owner_state=owner.state if owner else "unbound",
+                owner_generation=owner.generation if owner else 0,
+                claim_id=owner.claim_id if owner else None,
+                fingerprint=owner.fingerprint if owner else None,
+                expires_at=owner.expires_at.isoformat().replace("+00:00", "Z")
+                if owner and owner.expires_at
+                else None,
             ).as_dict()
         )
-    if store is None:
-        return archive_error("archive_unavailable", 503)
     try:
+        if batch.request_type == "archive_owner_claim":
+            claim = await hass.async_add_executor_job(
+                store.claim_owner,
+                batch.user_id,
+                batch.uploader_credential,
+                datetime.now(timezone.utc),
+            )
+            state = await hass.async_add_executor_job(
+                store.owner_status,
+                batch.user_id,
+                batch.uploader_credential,
+                datetime.now(timezone.utc),
+            )
+            return web.json_response(
+                {
+                    "ok": True,
+                    "request_type": "archive_owner_claim",
+                    "protocol_version": 2,
+                    "request_id": batch.request_id,
+                    "ownership_contract_version": 1,
+                    "owner_state": state.state,
+                    "owner_generation": state.generation,
+                    "claim_id": claim.claim_id,
+                    "fingerprint": claim.fingerprint,
+                    "expires_at": claim.expires_at.isoformat().replace("+00:00", "Z"),
+                }
+            )
+        if owner.state != "active":
+            return archive_error(
+                "owner_pending"
+                if owner.state == "pending"
+                else "owner_required"
+                if owner.state == "unbound"
+                else "owner_changed",
+                403,
+            )
         if batch.request_type == "archive_status":
+            # Projection status may await recorder. Recheck after that await.
             states = (
                 await worker.async_projection_status(batch.user_id)
                 if statistics_available
                 else await hass.async_add_executor_job(
                     store.projection_status, batch.user_id
                 )
+            )
+            await hass.async_add_executor_job(
+                store.assert_owner, batch.user_id, batch.uploader_credential
             )
             return web.json_response(
                 ArchiveProjectionStatus(
@@ -153,10 +234,15 @@ async def async_handle_archive_request(
             return archive_error("unsupported_sample_type", 422)
         if batch.request_type == "archive_inventory":
             page = await hass.async_add_executor_job(
-                store.inventory_page, batch.inventory_query
+                store.inventory_page, batch.inventory_query, batch.uploader_credential
             )
             return web.json_response(page.as_dict(batch.request_id))
-        receipt = await hass.async_add_executor_job(store.commit_batch, batch)
+        receipt = await hass.async_add_executor_job(
+            store.commit_batch,
+            batch,
+            batch.uploader_credential,
+            batch.expected_owner_generation,
+        )
         acknowledgement = receipt.as_dict()
         # A receipt proves only archive COMMIT. The status request performs
         # fresh recorder reconciliation before it may say statistics current.
@@ -165,6 +251,12 @@ async def async_handle_archive_request(
         )
         return web.json_response(acknowledgement)
     except ArchiveStoreError as exc:
+        if exc.code in {"owner_required", "owner_changed"}:
+            return archive_error(exc.code, 403)
+        if exc.code == "claim_conflict":
+            return archive_error("owner_pending", 409)
+        if exc.code == "invalid_credential":
+            return archive_error("invalid_request", 422)
         if exc.code in {"batch_conflict", "inventory_changed"}:
             return archive_error(exc.code, 409)
         if exc.code in {"invalid_query", "invalid_cursor"}:

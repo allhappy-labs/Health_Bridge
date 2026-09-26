@@ -17,16 +17,41 @@ The canonical wire fixtures and complete source catalog are in
 status fixtures contain one request and one response. The batch fixture is an
 upload request, and the acknowledgement fixture is its response. Dates are
 ISO-8601 UTC with a literal `Z` and at most six fractional digits. Other UTC
-offset spellings are rejected. No secret appears in a fixture.
+offset spellings are rejected. Fixtures use a synthetic all-zero credential;
+no live credential appears in a fixture.
 
 ## Requests
 
 All requests require `request_type`, integer `protocol_version: 2`, `request_id`,
-and `user_id`. IDs are 1–64 ASCII letters, digits, `.`, `_`, or `-`, beginning
+`user_id`, and `uploader_credential`. The credential is canonical unpadded
+base64url of exactly 32 bytes (43 characters). It is stored only in the
+phone's device-local Keychain and excluded from receipts, exports, responses,
+and logs. IDs are 1–64 ASCII letters, digits, `.`, `_`, or `-`, beginning
 with a letter or digit. Unknown fields are rejected apart from an optional
-authenticated-envelope `token`. `archive_capability` and `archive_status` have
+authenticated-envelope `token`. `archive_capability`, `archive_owner_claim`, and
+`archive_status` have
 no additional fields. Capability should be queried after connection setup and
 when the integration version changes. Unsupported v2 leaves live v1 available.
+
+Capability includes `ownership_contract_version: 1`, `owner_state`, and
+`owner_generation`. The app must require this contract before version-2 import.
+`owner_state` is `unbound`, `pending`, `active`, or `not_owner` relative to the
+supplied credential. A pending claimant additionally receives `claim_id`,
+`fingerprint`, and `expires_at`. The fingerprint is the first 12 lowercase hex
+digits of SHA-256 over the decoded credential. One claim per Health Bridge user
+may be pending for 24 hours; a retry by that phone is idempotent and a competing
+phone receives HTTP 409 `owner_pending`. See
+[`archive-owner-v2.json`](fixtures/archive-owner-v2.json).
+
+An HA administrator reads the pending claim at
+`GET /api/health_bridge/archive/{user_id}/owner`. Approval uses
+`POST .../owner-approve` with exactly
+`{"claim_id":"…","confirm_user_id":"person-1","confirm":"APPROVE"}`;
+rejection uses `POST .../owner-reject` with `"REJECT"`. Bodies are bounded to
+1,024 bytes. The administrator compares the claim fingerprint with the intended
+phone before approval. Approval immediately revokes the prior phone and
+increments generation; its old-phone-only originals remain archived. Back up
+Home Assistant before transfer. No claim is approved automatically.
 
 `archive_batch` additionally requires `batch_id`, `sample_type`, `coverage`,
 `samples`, and `deletions`. `sample_type` is one HealthKit quantity or category
@@ -85,14 +110,16 @@ the archive transaction commits.
 
 ## Responses and progress
 
-### Revision-guarded UUID inventory (archive schema 2)
+### Revision- and generation-guarded UUID inventory (archive schema 3)
 
 `archive_inventory` adds required `sample_type`, `start`, `end`, `limit`, and
 `cursor` to the standard authenticated HAL envelope. Dates must use UTC `Z`,
 `start < end`, and `limit` must be an integer from 1 through 200. The first
 request uses `cursor: null`. Only sample UUIDs are returned, with standard
 `ok`, `request_type`, `protocol_version`, echoed `request_id`, `sample_ids`,
-nonnegative integer `revision`, and nullable `next_cursor`. See
+nonnegative integer `revision`, `owner_generation`, and nullable `next_cursor`.
+Only current-generation originals are listed; older originals remain in admin
+browse/export. See
 [`archive-inventory-v2.json`](fixtures/archive-inventory-v2.json).
 
 Membership is **sample start in `[start,end)`**, not interval overlap. A sample
@@ -103,27 +130,33 @@ HealthKit readable boundary. Rows sort by start then canonical lowercase UUID,
 so same-time samples remain distinct. Tombstones are excluded.
 
 Treat cursors as opaque strings (maximum 2,048 characters). They bind user,
-type, both interval endpoints, page limit, revision, and last key. Changing
+type, both interval endpoints, page limit, revision, owner generation, and last key. Changing
 query scope, malformed cursors, or invalid keys returns HTTP 422
-`invalid_cursor`. Cursors are not credentials; the HAL token and configured
-user binding authorize every page. Inventory shares the control rate budget.
+`invalid_cursor`. Cursors are not credentials; each page needs the HAL token,
+configured user binding, and current uploader proof. Inventory shares the
+control rate budget.
+
 The revision and rows are read within one SQLite snapshot. A subsequent page
 with an outdated revision returns HTTP 409 `inventory_changed`; discard the
 partial comparison and restart that interval from a null cursor.
 
 A deletion-only `archive_batch` may include `expected_inventory_revision`, an
 integer from 0 through 9,223,372,036,854,775,807. A new conditional batch checks
-the current user/type revision under the same `BEGIN IMMEDIATE` transaction as
+`expected_owner_generation` from the same inventory snapshot. Both fields are
+required together on the wire. A transfer rejects the whole batch without a
+receipt, tombstone, sample, or coverage change. The batch checks the current
+user/type revision under the same `BEGIN IMMEDIATE` transaction as
 its tombstones. Mismatch returns only `{"ok":false,"error":"inventory_changed"}`
 with HTTP 409 and changes no samples, tombstones, coverage, projection jobs,
 revision, or receipt. Ordinary batches retain their existing behavior. Every
 new accepted batch increments that user/type revision once, including no-op
-batches; an exact retry returns its original receipt before checking the
-revision and does not increment it. After an acknowledged conditional deletion,
+batches; an exact retry by the still-approved owner returns its original
+receipt before checking the revision and does not increment it. A revoked owner
+cannot retrieve that receipt. After an acknowledged conditional deletion,
 restart inventory against the new revision before deleting another set of IDs.
 An empty page has the current revision (zero for a never-imported scope).
 
-Schema 1 upgrades atomically to schema 2, seeding durable per-user/type
+Schema 1/2 upgrades atomically to schema 3, preserving originals and seeding durable per-user/type
 revisions from accepted coverage rows. Revisions survive restart and backups.
 Explicit archive deletion increments and retains revision rows to invalidate
 outstanding comparisons across deletion and re-import. This metadata contains
@@ -151,7 +184,7 @@ the receipt reports `failed`, and status reports `projection_range_exceeded`.
 One durable repair intent replaces the affected type's jobs. Correct/delete
 oversized originals and explicitly retry to rebuild surviving statistics.
 Historical age is unrestricted. See [operations](../archive-operations.md).
-The SQLite archive uses schema 2 and lives at
+The SQLite archive uses schema 3 and lives at
 `.storage/health_bridge_archive.sqlite`, separately from recorder. Store opening,
 commits, and status reads run in Home Assistant's executor. An unavailable store
 does not prevent live integration setup; capability advertises
@@ -192,6 +225,9 @@ authentication. Validation fails before any archive mutation.
 | `duplicate_id` | A UUID occurs twice in the batch or both as sample and deletion. |
 | `limit_exceeded` | Batch count/bytes or metadata/detail bytes exceed advertised limits. |
 | `invalid_response` | A locally parsed capability, acknowledgement, or status response violates v2. |
+| `owner_required` | No uploader is approved for this user; request approval. |
+| `owner_pending` | This phone has a pending claim, or another phone has claimed the user. |
+| `owner_changed` | The supplied phone is not the approved uploader. |
 
 Authentication failure, unsupported advertised sample types, archive storage
 failure, and projection failure are route/store concerns; they must not be

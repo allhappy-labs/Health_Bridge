@@ -34,7 +34,6 @@ from .archive_protocol import (
     ArchiveReceipt,
     ArchiveSample,
     validate_archive_fields,
-    validate_archive_request,
 )
 from .archive_owner import OwnerClaim, OwnerState, credential_digest
 
@@ -93,8 +92,9 @@ class ProjectionJob:
 _SCHEMA = (
     """CREATE TABLE receipts (
         user_id TEXT NOT NULL, batch_id TEXT NOT NULL,
+        owner_generation INTEGER NOT NULL DEFAULT 0,
         payload_hash TEXT NOT NULL, receipt_json TEXT NOT NULL,
-        PRIMARY KEY (user_id, batch_id))""",
+        PRIMARY KEY (user_id, batch_id, owner_generation))""",
     """CREATE TABLE samples (
         user_id TEXT NOT NULL, sample_type TEXT NOT NULL, sample_id TEXT NOT NULL,
         start TEXT NOT NULL, end TEXT NOT NULL,
@@ -109,10 +109,12 @@ _SCHEMA = (
         PRIMARY KEY (user_id, sample_type, sample_id, owner_generation))""",
     """CREATE TABLE coverage_intervals (
         user_id TEXT NOT NULL, sample_type TEXT NOT NULL, batch_id TEXT NOT NULL,
+        owner_generation INTEGER NOT NULL DEFAULT 0,
         kind TEXT NOT NULL CHECK (kind IN ('interval', 'anchor')),
         start TEXT, end TEXT, anchor TEXT, authorization_start TEXT,
-        PRIMARY KEY (user_id, batch_id),
-        FOREIGN KEY (user_id, batch_id) REFERENCES receipts(user_id, batch_id)
+        PRIMARY KEY (user_id, batch_id, owner_generation),
+        FOREIGN KEY (user_id, batch_id, owner_generation)
+            REFERENCES receipts(user_id, batch_id, owner_generation)
             ON DELETE CASCADE,
         CHECK ((kind='interval' AND start IS NOT NULL AND end IS NOT NULL
                 AND start < end AND anchor IS NULL)
@@ -220,7 +222,7 @@ def _wire_batch(batch: ArchiveBatch) -> dict[str, Any]:
 
 
 def _read_sample(value: str, sample_type: str) -> ArchiveSample:
-    return validate_archive_request(
+    return validate_archive_fields(
         {
             "request_type": "archive_batch",
             "protocol_version": 2,
@@ -313,6 +315,39 @@ class ArchiveStore:
                     db.execute("DROP TABLE tombstones")
                     db.execute("ALTER TABLE tombstones_v3 RENAME TO tombstones")
                 db.execute("PRAGMA user_version=3")
+            receipt_columns = {row[1] for row in db.execute("PRAGMA table_info(receipts)")}
+            if "owner_generation" not in receipt_columns:
+                # Upgrade already-deployed schema-3 stores too. Receipt and
+                # coverage keys must be scoped together, preserving legacy 0.
+                db.execute("""CREATE TABLE receipts_scoped (
+                    user_id TEXT NOT NULL, batch_id TEXT NOT NULL,
+                    owner_generation INTEGER NOT NULL DEFAULT 0,
+                    payload_hash TEXT NOT NULL, receipt_json TEXT NOT NULL,
+                    PRIMARY KEY (user_id, batch_id, owner_generation))""")
+                db.execute("""INSERT INTO receipts_scoped
+                    SELECT user_id, batch_id, 0, payload_hash, receipt_json FROM receipts""")
+                db.execute("""CREATE TABLE coverage_scoped (
+                    user_id TEXT NOT NULL, sample_type TEXT NOT NULL,
+                    batch_id TEXT NOT NULL, owner_generation INTEGER NOT NULL DEFAULT 0,
+                    kind TEXT NOT NULL CHECK (kind IN ('interval', 'anchor')),
+                    start TEXT, end TEXT, anchor TEXT, authorization_start TEXT,
+                    PRIMARY KEY (user_id, batch_id, owner_generation),
+                    FOREIGN KEY (user_id, batch_id, owner_generation)
+                        REFERENCES receipts_scoped(user_id, batch_id, owner_generation)
+                        ON DELETE CASCADE,
+                    CHECK ((kind='interval' AND start IS NOT NULL AND end IS NOT NULL
+                            AND start < end AND anchor IS NULL)
+                        OR (kind='anchor' AND start IS NULL AND end IS NULL
+                            AND anchor IS NOT NULL)))""")
+                db.execute("""INSERT INTO coverage_scoped
+                    SELECT user_id, sample_type, batch_id, 0,
+                    kind, start, end, anchor, authorization_start FROM coverage_intervals""")
+                db.execute("DROP TABLE coverage_intervals")
+                db.execute("DROP TABLE receipts")
+                db.execute("ALTER TABLE receipts_scoped RENAME TO receipts")
+                db.execute("ALTER TABLE coverage_scoped RENAME TO coverage_intervals")
+                db.execute("""CREATE INDEX coverage_type ON coverage_intervals
+                    (user_id, sample_type, start, end)""")
         return store
 
     @contextmanager
@@ -407,6 +442,9 @@ class ArchiveStore:
         instant = _instant(now)
         with self._connection() as db:
             db.execute("BEGIN IMMEDIATE")
+            owner = self._owner_row(db, user_id)
+            if owner and hmac.compare_digest(owner["credential_digest"], digest):
+                raise ArchiveStoreError("owner_already_active")
             existing = db.execute(
                 "SELECT * FROM archive_owner_claims WHERE user_id=?", (user_id,)
             ).fetchone()
@@ -472,6 +510,8 @@ class ArchiveStore:
             if claim is None:
                 raise ArchiveStoreError("claim_not_found")
             owner = self._owner_row(db, user_id)
+            if owner and hmac.compare_digest(owner["credential_digest"], claim["credential_digest"]):
+                raise ArchiveStoreError("owner_already_active")
             generation = owner["generation"] + 1 if owner else 1
             db.execute(
                 """INSERT INTO archive_owners VALUES (?, ?, ?)
@@ -518,8 +558,9 @@ class ArchiveStore:
             if expected_owner_generation is not None and expected_owner_generation != generation:
                 raise ArchiveStoreError("owner_changed")
             prior = db.execute(
-                "SELECT payload_hash, receipt_json FROM receipts WHERE user_id=? AND batch_id=?",
-                (batch.user_id, batch.batch_id),
+                """SELECT payload_hash, receipt_json FROM receipts
+                WHERE user_id=? AND batch_id=? AND owner_generation=?""",
+                (batch.user_id, batch.batch_id, generation),
             ).fetchone()
             if prior:
                 if prior["payload_hash"] != payload_hash:
@@ -652,15 +693,16 @@ class ArchiveStore:
                 ("failed" if pending["state"] == "failed" else "pending") if pending else "current",
             )
             db.execute(
-                "INSERT INTO receipts VALUES (?, ?, ?, ?)",
-                (batch.user_id, batch.batch_id, payload_hash, _json(receipt.as_dict())),
+                "INSERT INTO receipts VALUES (?, ?, ?, ?, ?)",
+                (batch.user_id, batch.batch_id, generation, payload_hash, _json(receipt.as_dict())),
             )
             covered = wire["coverage"]
             db.execute(
-                "INSERT INTO coverage_intervals VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO coverage_intervals VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     *scope,
                     batch.batch_id,
+                    generation,
                     covered["kind"],
                     covered.get("start"),
                     covered.get("end"),
@@ -787,6 +829,13 @@ class ArchiveStore:
         )
 
     def query_samples(self, query: ArchiveQuery) -> ArchivePage:
+        """Browse canonical originals without changing the established page model."""
+        return self.query_samples_with_provenance(query)[0]
+
+    def query_samples_with_provenance(
+        self, query: ArchiveQuery
+    ) -> tuple[ArchivePage, tuple[int, ...]]:
+        """Read originals and matching owner generations in one page snapshot."""
         _executor_only()
         try:
             if (
@@ -821,7 +870,7 @@ class ArchiveStore:
                 after = decoded[4:]
             except (ValueError, TypeError, UnicodeError) as exc:
                 raise ArchiveStoreError("invalid_cursor") from exc
-        sql = """SELECT start, sample_id, sample_json FROM samples
+        sql = """SELECT start, sample_id, sample_json, owner_generation FROM samples
             WHERE user_id=? AND sample_type=? AND start < ?
             AND (end > ? OR (start=end AND start >= ?))"""
         args: list[Any] = [query.user_id, query.sample_type, end, start, start]
@@ -838,9 +887,12 @@ class ArchiveStore:
             cursor = base64.urlsafe_b64encode(
                 _json([*scope, page[-1]["start"], page[-1]["sample_id"]]).encode()
             ).decode()
-        return ArchivePage(
-            tuple(_read_sample(row["sample_json"], query.sample_type) for row in page),
-            cursor,
+        return (
+            ArchivePage(
+                tuple(_read_sample(row["sample_json"], query.sample_type) for row in page),
+                cursor,
+            ),
+            tuple(row["owner_generation"] for row in page),
         )
 
     def claim_projection_jobs(
@@ -890,10 +942,11 @@ class ArchiveStore:
         """Return one original using its full partition key, never UUID alone."""
         with self._connection() as db:
             row = db.execute(
-                "SELECT sample_json FROM samples WHERE user_id=? AND sample_type=? AND sample_id=?",
+                """SELECT sample_json, owner_generation FROM samples
+                WHERE user_id=? AND sample_type=? AND sample_id=?""",
                 (user_id, sample_type, sample_id),
             ).fetchone()
-        return json.loads(row[0]) if row else None
+        return {**json.loads(row["sample_json"]), "owner_generation": row["owner_generation"]} if row else None
 
     def tombstone_page(
         self, user_id: str, sample_type: str, after: str = "", limit: int = 200

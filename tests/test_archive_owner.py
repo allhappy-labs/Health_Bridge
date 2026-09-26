@@ -13,7 +13,11 @@ from custom_components.health_bridge.archive_protocol import (
     ArchiveLimits,
     validate_archive_request,
 )
-from custom_components.health_bridge.archive_store import ArchiveStore, ArchiveStoreError
+from custom_components.health_bridge.archive_store import (
+    ArchiveQuery,
+    ArchiveStore,
+    ArchiveStoreError,
+)
 
 
 NOW = datetime(2026, 9, 26, tzinfo=timezone.utc)
@@ -37,6 +41,7 @@ def batch(*, batch_id="first", samples=None, deletions=None, revision=None):
         payload["deletions"] = deletions
     if revision is not None:
         payload["expected_inventory_revision"] = revision
+        payload["expected_owner_generation"] = 1
     return validate_archive_request(payload, limits=ArchiveLimits())
 
 
@@ -80,6 +85,29 @@ def counts(store):
     with sqlite3.connect(store._path) as db:
         return tuple(db.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
                      for table in ("samples", "tombstones", "receipts", "coverage_intervals", "projection_jobs"))
+
+
+def downgrade_receipt_tables(db):
+    """Model the deployed pre-generation receipt/coverage identity."""
+    db.execute("ALTER TABLE coverage_intervals RENAME TO coverage_v3")
+    db.execute("ALTER TABLE receipts RENAME TO receipts_v3")
+    db.execute("""CREATE TABLE receipts (
+        user_id TEXT NOT NULL, batch_id TEXT NOT NULL,
+        payload_hash TEXT NOT NULL, receipt_json TEXT NOT NULL,
+        PRIMARY KEY (user_id, batch_id))""")
+    db.execute("""INSERT INTO receipts
+        SELECT user_id, batch_id, payload_hash, receipt_json FROM receipts_v3""")
+    db.execute("""CREATE TABLE coverage_intervals (
+        user_id TEXT NOT NULL, sample_type TEXT NOT NULL, batch_id TEXT NOT NULL,
+        kind TEXT NOT NULL, start TEXT, end TEXT, anchor TEXT,
+        authorization_start TEXT, PRIMARY KEY (user_id, batch_id),
+        FOREIGN KEY (user_id, batch_id) REFERENCES receipts(user_id, batch_id)
+            ON DELETE CASCADE)""")
+    db.execute("""INSERT INTO coverage_intervals
+        SELECT user_id, sample_type, batch_id, kind, start, end, anchor,
+        authorization_start FROM coverage_v3""")
+    db.execute("DROP TABLE coverage_v3")
+    db.execute("DROP TABLE receipts_v3")
 
 
 def test_unapproved_owner_cannot_write_or_inventory(store):
@@ -247,6 +275,77 @@ def test_revoked_owner_cannot_replay_receipt(store):
         store.commit_batch(first, SECRET_A)
 
 
+def test_new_owner_same_batch_id_gets_new_receipt_and_coverage(store):
+    approve(store, SECRET_A)
+    first = batch(batch_id="shared-id")
+    original_receipt = store.commit_batch(first, SECRET_A)
+    assert original_receipt.committed_samples == 1
+    approve(store, SECRET_B)
+    new_receipt = store.commit_batch(first, SECRET_B)
+    assert new_receipt.committed_samples == 0
+    assert store.commit_batch(first, SECRET_B) == new_receipt
+    assert store.sample_detail("person-1", SAMPLE_TYPE, first.samples[0].uuid)["owner_generation"] == 2
+    with sqlite3.connect(store._path) as db:
+        assert db.execute(
+            "SELECT owner_generation FROM receipts WHERE batch_id='shared-id' ORDER BY owner_generation"
+        ).fetchall() == [(1,), (2,)]
+        assert db.execute(
+            "SELECT owner_generation FROM coverage_intervals WHERE batch_id='shared-id' ORDER BY owner_generation"
+        ).fetchall() == [(1,), (2,)]
+
+
+def test_active_secret_cannot_claim_or_approve_itself(store):
+    approve(store, SECRET_A)
+    first = batch()
+    store.commit_batch(first, SECRET_A)
+    with pytest.raises(ArchiveStoreError, match="owner_already_active"):
+        store.claim_owner("person-1", SECRET_A, NOW)
+    with sqlite3.connect(store._path) as db:
+        digest = db.execute("SELECT credential_digest FROM archive_owners").fetchone()[0]
+        db.execute(
+            "INSERT INTO archive_owner_claims VALUES (?, ?, ?, ?)",
+            ("person-1", "stale-self-claim", digest, "2026-09-27T00:00:00.000000Z"),
+        )
+    with pytest.raises(ArchiveStoreError, match="owner_already_active"):
+        store.approve_owner("person-1", "stale-self-claim", NOW)
+    assert store.assert_owner("person-1", SECRET_A) == 1
+    assert store.inventory_page(inventory(), SECRET_A).sample_ids == (first.samples[0].uuid,)
+
+
+def test_browse_and_detail_include_generation_without_secret(store):
+    approve(store, SECRET_A)
+    first = batch()
+    store.commit_batch(first, SECRET_A)
+    detail = store.sample_detail("person-1", SAMPLE_TYPE, first.samples[0].uuid)
+    assert detail["owner_generation"] == 1
+    assert SECRET_A not in json.dumps(detail)
+    query = ArchiveQuery("person-1", SAMPLE_TYPE, inventory().start, inventory().end)
+    page, generations = store.query_samples_with_provenance(query)
+    assert tuple(sample.uuid for sample in page.samples) == (first.samples[0].uuid,)
+    assert generations == (1,)
+    approve(store, SECRET_B)
+    page, generations = store.query_samples_with_provenance(query)
+    assert tuple(sample.uuid for sample in page.samples) == (first.samples[0].uuid,)
+    assert generations == (1,)
+
+
+def test_existing_schema_three_receipts_upgrade_without_losing_coverage(store):
+    approve(store, SECRET_A)
+    first = batch()
+    store.commit_batch(first, SECRET_A)
+    with sqlite3.connect(store._path) as db:
+        downgrade_receipt_tables(db)
+        assert db.execute("PRAGMA user_version").fetchone() == (3,)
+    reopened = ArchiveStore.open(store._path)
+    with sqlite3.connect(store._path) as db:
+        assert db.execute("SELECT owner_generation FROM receipts").fetchall() == [(0,)]
+        assert db.execute("SELECT owner_generation FROM coverage_intervals").fetchall() == [(0,)]
+        assert db.execute("PRAGMA foreign_key_check").fetchall() == []
+    assert reopened.sample_detail("person-1", SAMPLE_TYPE, first.samples[0].uuid) is not None
+    assert reopened.assert_owner("person-1", SECRET_A) == 1
+    ArchiveStore.open(store._path)
+
+
 def test_schema_two_migration_retains_legacy_rows_and_tombstones(tmp_path):
     path = tmp_path / "old.sqlite"
     store = ArchiveStore.open(path)
@@ -266,6 +365,7 @@ def test_schema_two_migration_retains_legacy_rows_and_tombstones(tmp_path):
         db.execute("""INSERT INTO tombstones
             SELECT user_id, sample_type, sample_id, batch_id FROM tombstones_v3""")
         db.execute("DROP TABLE tombstones_v3")
+        downgrade_receipt_tables(db)
         db.execute("DROP TABLE archive_owners")
         db.execute("DROP TABLE archive_owner_claims")
         db.execute("PRAGMA user_version=2")
@@ -275,9 +375,16 @@ def test_schema_two_migration_retains_legacy_rows_and_tombstones(tmp_path):
         assert db.execute("SELECT owner_generation FROM samples").fetchone() == (0,)
         assert db.execute("SELECT owner_generation FROM tombstones").fetchone() == (0,)
         assert db.execute("SELECT count(*) FROM receipts").fetchone() == (3,)
+        assert db.execute("SELECT DISTINCT owner_generation FROM receipts").fetchall() == [(0,)]
+        assert db.execute("SELECT DISTINCT owner_generation FROM coverage_intervals").fetchall() == [(0,)]
     approve(migrated, SECRET_B)
     assert migrated.inventory_page(inventory(), SECRET_B).sample_ids == ()
+    migrated_receipt = migrated.commit_batch(first, SECRET_B)
+    assert migrated_receipt.committed_samples == 0
+    assert migrated.commit_batch(first, SECRET_B) == migrated_receipt
     assert migrated.commit_batch(batch(batch_id="readable", samples=[{**sample, "uuid": second_id}]), SECRET_B).committed_samples == 1
     assert migrated.sample_detail("person-1", SAMPLE_TYPE, first.samples[0].uuid) is not None
     with sqlite3.connect(path) as db:
         assert db.execute("SELECT count(*) FROM samples").fetchone() == (2,)
+        assert db.execute("SELECT count(*) FROM receipts WHERE batch_id='first'").fetchone() == (2,)
+        assert db.execute("SELECT count(*) FROM coverage_intervals WHERE batch_id='first'").fetchone() == (2,)

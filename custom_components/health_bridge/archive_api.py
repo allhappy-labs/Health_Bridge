@@ -106,7 +106,7 @@ class ArchiveView(HomeAssistantView):
                     {
                         "ok": True,
                         "user_id": user_id,
-                        "owner_state": state.state,
+                        "owner_state": "active" if state.generation > 0 else "unbound",
                         "owner_generation": state.generation,
                         "pending_claim": None
                         if claim is None
@@ -237,8 +237,6 @@ class ArchiveView(HomeAssistantView):
                     "recorder_copies_deleted": False,
                 }
             )
-        except ValueError, UnicodeError:
-            return _error("invalid_confirmation", 400)
         except ArchiveStoreError as exc:
             return _error(
                 "claim_not_found"
@@ -246,6 +244,8 @@ class ArchiveView(HomeAssistantView):
                 else "archive_unavailable",
                 404 if exc.code == "claim_not_found" else 503,
             )
+        except ValueError, UnicodeError:
+            return _error("invalid_confirmation", 400)
         except Exception:
             return _error("archive_unavailable", 503)
 

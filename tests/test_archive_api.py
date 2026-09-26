@@ -72,6 +72,7 @@ async def test_admin_owner_claim_fingerprint_approval_and_transfer(api, hass):
     body = await owner.json()
     assert body["pending_claim"]["fingerprint"] == claim.fingerprint
     assert body["owner_generation"] == 1
+    assert body["owner_state"] == "active"
     bad = await api.post(
         f"{BASE}/owner-approve",
         json={
@@ -106,6 +107,27 @@ async def test_non_admin_cannot_approve_owner(api, hass_admin_user):
         },
     )
     assert response.status == 403
+
+
+async def test_rejecting_stale_claim_returns_not_found_and_keeps_current_claim(
+    api, hass
+):
+    store = hass.data["health_bridge"]["archive_store"]
+    claim = await hass.async_add_executor_job(
+        store.claim_owner, "person-1", OTHER_SECRET, datetime.now(timezone.utc)
+    )
+    response = await api.post(
+        f"{BASE}/owner-reject",
+        json={
+            "claim_id": "11111111-1111-1111-1111-111111111111",
+            "confirm_user_id": "person-1",
+            "confirm": "REJECT",
+        },
+    )
+    assert response.status == 404
+    assert await response.json() == {"ok": False, "error": "claim_not_found"}
+    owner = await api.get(f"{BASE}/owner")
+    assert (await owner.json())["pending_claim"]["claim_id"] == claim.claim_id
 
 
 @pytest.mark.parametrize(

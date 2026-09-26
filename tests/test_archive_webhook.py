@@ -122,6 +122,33 @@ async def test_claim_requires_admin_approval_and_transfer_revokes_prior_phone(
     assert (await current.json())["owner_generation"] == 2
 
 
+async def test_active_owner_claim_retry_reports_active_without_pending_fields(
+    archive_client, hass
+):
+    store = hass.data["health_bridge"]["archive_store"]
+    before = await hass.async_add_executor_job(
+        store.pending_owner_claim, USER, datetime.now(timezone.utc)
+    )
+    response = await send(archive_client, payload("archive_owner_claim"))
+    assert response.status == 200
+    body = await response.json()
+    assert body == {
+        "ok": True,
+        "request_type": "archive_owner_claim",
+        "protocol_version": 2,
+        "request_id": "control-1",
+        "ownership_contract_version": 1,
+        "owner_state": "active",
+        "owner_generation": 1,
+    }
+    assert (
+        await hass.async_add_executor_job(
+            store.pending_owner_claim, USER, datetime.now(timezone.utc)
+        )
+        == before
+    )
+
+
 async def test_missing_or_malformed_owner_proof_never_reads_status(archive_client):
     missing = payload("archive_status")
     del missing["uploader_credential"]

@@ -53,6 +53,25 @@ def archive_error(code: str, status: int) -> web.Response:
     return web.json_response({"ok": False, "error": code}, status=status)
 
 
+def _owner_claim_response(request_id: str, state, claim=None) -> web.Response:
+    body = {
+        "ok": True,
+        "request_type": "archive_owner_claim",
+        "protocol_version": 2,
+        "request_id": request_id,
+        "ownership_contract_version": 1,
+        "owner_state": state.state,
+        "owner_generation": state.generation,
+    }
+    if claim is not None:
+        body.update(
+            claim_id=claim.claim_id,
+            fingerprint=claim.fingerprint,
+            expires_at=claim.expires_at.isoformat().replace("+00:00", "Z"),
+        )
+    return web.json_response(body)
+
+
 def _reported_projection_state(state: str, statistics_available: bool) -> str:
     """An empty outbox alone cannot prove HA statistics were read back."""
     if state == "current" and not statistics_available:
@@ -169,32 +188,36 @@ async def async_handle_archive_request(
         )
     try:
         if batch.request_type == "archive_owner_claim":
-            claim = await hass.async_add_executor_job(
-                store.claim_owner,
-                batch.user_id,
-                batch.uploader_credential,
-                datetime.now(timezone.utc),
-            )
+            if owner.state == "active":
+                return _owner_claim_response(batch.request_id, owner)
+            try:
+                claim = await hass.async_add_executor_job(
+                    store.claim_owner,
+                    batch.user_id,
+                    batch.uploader_credential,
+                    datetime.now(timezone.utc),
+                )
+            except ArchiveStoreError as exc:
+                if exc.code != "owner_already_active":
+                    raise
+                current = await hass.async_add_executor_job(
+                    store.owner_status,
+                    batch.user_id,
+                    batch.uploader_credential,
+                    datetime.now(timezone.utc),
+                )
+                return (
+                    _owner_claim_response(batch.request_id, current)
+                    if current.state == "active"
+                    else archive_error("owner_changed", 403)
+                )
             state = await hass.async_add_executor_job(
                 store.owner_status,
                 batch.user_id,
                 batch.uploader_credential,
                 datetime.now(timezone.utc),
             )
-            return web.json_response(
-                {
-                    "ok": True,
-                    "request_type": "archive_owner_claim",
-                    "protocol_version": 2,
-                    "request_id": batch.request_id,
-                    "ownership_contract_version": 1,
-                    "owner_state": state.state,
-                    "owner_generation": state.generation,
-                    "claim_id": claim.claim_id,
-                    "fingerprint": claim.fingerprint,
-                    "expires_at": claim.expires_at.isoformat().replace("+00:00", "Z"),
-                }
-            )
+            return _owner_claim_response(batch.request_id, state, claim)
         if owner.state != "active":
             return archive_error(
                 "owner_pending"

@@ -15,6 +15,7 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
+import hmac
 import json
 from pathlib import Path
 import re
@@ -35,6 +36,7 @@ from .archive_protocol import (
     validate_archive_fields,
     validate_archive_request,
 )
+from .archive_owner import OwnerClaim, OwnerState, credential_digest
 
 
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
@@ -97,13 +99,14 @@ _SCHEMA = (
         user_id TEXT NOT NULL, sample_type TEXT NOT NULL, sample_id TEXT NOT NULL,
         start TEXT NOT NULL, end TEXT NOT NULL,
         content_hash TEXT NOT NULL, sample_json TEXT NOT NULL,
+        owner_generation INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY (user_id, sample_type, sample_id), CHECK (start <= end))""",
     """CREATE INDEX samples_range ON samples
         (user_id, sample_type, start, sample_id)""",
     """CREATE TABLE tombstones (
         user_id TEXT NOT NULL, sample_type TEXT NOT NULL, sample_id TEXT NOT NULL,
-        batch_id TEXT NOT NULL,
-        PRIMARY KEY (user_id, sample_type, sample_id))""",
+        batch_id TEXT NOT NULL, owner_generation INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (user_id, sample_type, sample_id, owner_generation))""",
     """CREATE TABLE coverage_intervals (
         user_id TEXT NOT NULL, sample_type TEXT NOT NULL, batch_id TEXT NOT NULL,
         kind TEXT NOT NULL CHECK (kind IN ('interval', 'anchor')),
@@ -280,14 +283,36 @@ class ArchiveStore:
                     db.execute(statement)
                 db.execute("PRAGMA user_version=1")
             if version <= 1:
-                db.execute("""CREATE TABLE inventory_revisions (
+                db.execute("""CREATE TABLE IF NOT EXISTS inventory_revisions (
                     user_id TEXT NOT NULL, sample_type TEXT NOT NULL,
                     revision INTEGER NOT NULL CHECK (revision >= 0),
                     PRIMARY KEY (user_id, sample_type))""")
-                db.execute("""INSERT INTO inventory_revisions
+                db.execute("""INSERT OR IGNORE INTO inventory_revisions
                     SELECT user_id, sample_type, COUNT(*) FROM coverage_intervals
                     GROUP BY user_id, sample_type""")
                 db.execute("PRAGMA user_version=2")
+            if version <= 2:
+                db.execute("""CREATE TABLE IF NOT EXISTS archive_owners (
+                    user_id TEXT PRIMARY KEY, credential_digest TEXT NOT NULL,
+                    generation INTEGER NOT NULL CHECK (generation > 0))""")
+                db.execute("""CREATE TABLE IF NOT EXISTS archive_owner_claims (
+                    user_id TEXT PRIMARY KEY, claim_id TEXT NOT NULL,
+                    credential_digest TEXT NOT NULL, expires_at TEXT NOT NULL)""")
+                columns = {row[1] for row in db.execute("PRAGMA table_info(samples)")}
+                if "owner_generation" not in columns:
+                    db.execute("ALTER TABLE samples ADD COLUMN owner_generation INTEGER NOT NULL DEFAULT 0")
+                tombstone_columns = {row[1] for row in db.execute("PRAGMA table_info(tombstones)")}
+                if "owner_generation" not in tombstone_columns:
+                    db.execute("""CREATE TABLE tombstones_v3 (
+                        user_id TEXT NOT NULL, sample_type TEXT NOT NULL,
+                        sample_id TEXT NOT NULL, batch_id TEXT NOT NULL,
+                        owner_generation INTEGER NOT NULL DEFAULT 0,
+                        PRIMARY KEY (user_id, sample_type, sample_id, owner_generation))""")
+                    db.execute("""INSERT INTO tombstones_v3
+                        SELECT user_id, sample_type, sample_id, batch_id, 0 FROM tombstones""")
+                    db.execute("DROP TABLE tombstones")
+                    db.execute("ALTER TABLE tombstones_v3 RENAME TO tombstones")
+                db.execute("PRAGMA user_version=3")
         return store
 
     @contextmanager
@@ -342,7 +367,135 @@ class ArchiveStore:
         with self._access_lock:
             self._backup_in_progress = False
 
-    def commit_batch(self, batch: ArchiveBatch) -> ArchiveReceipt:
+    @staticmethod
+    def _owner_digest(secret: str) -> str:
+        try:
+            return credential_digest(secret)
+        except ValueError as exc:
+            raise ArchiveStoreError("invalid_credential") from exc
+
+    @staticmethod
+    def _owner_row(db: sqlite3.Connection, user_id: str) -> sqlite3.Row | None:
+        return db.execute(
+            "SELECT credential_digest, generation FROM archive_owners WHERE user_id=?",
+            (user_id,),
+        ).fetchone()
+
+    @classmethod
+    def _assert_owner_in_transaction(
+        cls, db: sqlite3.Connection, user_id: str, digest: str
+    ) -> int:
+        owner = cls._owner_row(db, user_id)
+        if owner is None:
+            raise ArchiveStoreError("owner_required")
+        if not hmac.compare_digest(owner["credential_digest"], digest):
+            raise ArchiveStoreError("owner_changed")
+        return owner["generation"]
+
+    def assert_owner(self, user_id: str, uploader_secret: str) -> int:
+        _executor_only()
+        digest = self._owner_digest(uploader_secret)
+        with self._connection() as db:
+            db.execute("BEGIN")
+            return self._assert_owner_in_transaction(db, user_id, digest)
+
+    def claim_owner(self, user_id: str, uploader_secret: str, now: datetime) -> OwnerClaim:
+        _executor_only()
+        if not isinstance(user_id, str) or not _ID.fullmatch(user_id):
+            raise ArchiveStoreError("invalid_user")
+        digest = self._owner_digest(uploader_secret)
+        instant = _instant(now)
+        with self._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            existing = db.execute(
+                "SELECT * FROM archive_owner_claims WHERE user_id=?", (user_id,)
+            ).fetchone()
+            if existing and existing["expires_at"] <= instant:
+                db.execute("DELETE FROM archive_owner_claims WHERE user_id=?", (user_id,))
+                existing = None
+            if existing:
+                if not hmac.compare_digest(existing["credential_digest"], digest):
+                    raise ArchiveStoreError("claim_conflict")
+                return OwnerClaim(existing["claim_id"], digest[:12], _date(existing["expires_at"]))
+            claim = OwnerClaim(str(uuid4()), digest[:12], now + timedelta(hours=24))
+            db.execute(
+                "INSERT INTO archive_owner_claims VALUES (?, ?, ?, ?)",
+                (user_id, claim.claim_id, digest, _instant(claim.expires_at)),
+            )
+            return claim
+
+    def pending_owner_claim(self, user_id: str, now: datetime) -> OwnerClaim | None:
+        _executor_only()
+        instant = _instant(now)
+        with self._connection() as db:
+            row = db.execute(
+                "SELECT * FROM archive_owner_claims WHERE user_id=? AND expires_at>?",
+                (user_id, instant),
+            ).fetchone()
+        return (
+            OwnerClaim(row["claim_id"], row["credential_digest"][:12], _date(row["expires_at"]))
+            if row else None
+        )
+
+    def owner_status(
+        self, user_id: str, uploader_secret: str | None, now: datetime
+    ) -> OwnerState:
+        _executor_only()
+        digest = self._owner_digest(uploader_secret) if uploader_secret is not None else None
+        instant = _instant(now)
+        with self._connection() as db:
+            db.execute("BEGIN")
+            owner = self._owner_row(db, user_id)
+            generation = owner["generation"] if owner else 0
+            if owner and digest and hmac.compare_digest(owner["credential_digest"], digest):
+                return OwnerState("active", generation)
+            pending = db.execute(
+                "SELECT * FROM archive_owner_claims WHERE user_id=? AND expires_at>?",
+                (user_id, instant),
+            ).fetchone()
+            if pending and digest and hmac.compare_digest(pending["credential_digest"], digest):
+                return OwnerState(
+                    "pending", generation, pending["claim_id"],
+                    digest[:12], _date(pending["expires_at"]),
+                )
+            return OwnerState("not_owner" if owner else "unbound", generation)
+
+    def approve_owner(self, user_id: str, claim_id: str, now: datetime) -> OwnerState:
+        _executor_only()
+        instant = _instant(now)
+        with self._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            claim = db.execute(
+                "SELECT * FROM archive_owner_claims WHERE user_id=? AND claim_id=? AND expires_at>?",
+                (user_id, claim_id, instant),
+            ).fetchone()
+            if claim is None:
+                raise ArchiveStoreError("claim_not_found")
+            owner = self._owner_row(db, user_id)
+            generation = owner["generation"] + 1 if owner else 1
+            db.execute(
+                """INSERT INTO archive_owners VALUES (?, ?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                credential_digest=excluded.credential_digest,
+                generation=excluded.generation""",
+                (user_id, claim["credential_digest"], generation),
+            )
+            db.execute("DELETE FROM archive_owner_claims WHERE user_id=?", (user_id,))
+            return OwnerState("active", generation)
+
+    def reject_owner(self, user_id: str, claim_id: str) -> None:
+        _executor_only()
+        with self._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            db.execute(
+                "DELETE FROM archive_owner_claims WHERE user_id=? AND claim_id=?",
+                (user_id, claim_id),
+            )
+
+    def commit_batch(
+        self, batch: ArchiveBatch, uploader_secret: str,
+        expected_owner_generation: int | None = None,
+    ) -> ArchiveReceipt:
         """Atomically accept a validated batch, or return its exact prior receipt.
 
         Dataclasses are revalidated as defense against accidental direct callers.
@@ -354,8 +507,16 @@ class ArchiveStore:
         wire = _wire_batch(batch)
         payload_hash = _hash(_json(wire))
         scope = (batch.user_id, batch.sample_type)
+        digest = self._owner_digest(uploader_secret)
+        if expected_owner_generation is not None and (
+            type(expected_owner_generation) is not int or expected_owner_generation < 0
+        ):
+            raise ArchiveStoreError("invalid_owner_generation")
         with self._connection() as db:
             db.execute("BEGIN IMMEDIATE")
+            generation = self._assert_owner_in_transaction(db, batch.user_id, digest)
+            if expected_owner_generation is not None and expected_owner_generation != generation:
+                raise ArchiveStoreError("owner_changed")
             prior = db.execute(
                 "SELECT payload_hash, receipt_json FROM receipts WHERE user_id=? AND batch_id=?",
                 (batch.user_id, batch.batch_id),
@@ -396,50 +557,62 @@ class ArchiveStore:
             for sample, value in zip(batch.samples, wire["samples"], strict=True):
                 key = (*scope, sample.uuid)
                 if db.execute(
-                    "SELECT 1 FROM tombstones WHERE user_id=? AND sample_type=? AND sample_id=?",
-                    key,
+                    """SELECT 1 FROM tombstones WHERE user_id=? AND sample_type=?
+                    AND sample_id=? AND owner_generation=?""",
+                    (*key, generation),
                 ).fetchone():
                     continue
                 encoded = _json(value)
                 content_hash = _hash(encoded)
                 old = db.execute(
-                    "SELECT start, end, content_hash FROM samples WHERE user_id=? AND sample_type=? AND sample_id=?",
+                    """SELECT start, end, content_hash, owner_generation FROM samples
+                    WHERE user_id=? AND sample_type=? AND sample_id=?""",
                     key,
                 ).fetchone()
                 if old and old["content_hash"] == content_hash:
+                    if old["owner_generation"] != generation:
+                        db.execute(
+                            """UPDATE samples SET owner_generation=? WHERE user_id=?
+                            AND sample_type=? AND sample_id=?""",
+                            (generation, *key),
+                        )
                     continue
                 if old:
                     affect(_date(old["start"]), _date(old["end"]))
                 affect(sample.start, sample.end)
                 db.execute(
-                    """INSERT INTO samples VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """INSERT INTO samples VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(user_id, sample_type, sample_id) DO UPDATE SET
                     start=excluded.start, end=excluded.end,
-                    content_hash=excluded.content_hash, sample_json=excluded.sample_json""",
+                    content_hash=excluded.content_hash, sample_json=excluded.sample_json,
+                    owner_generation=excluded.owner_generation""",
                     (
                         *key,
                         _instant(sample.start),
                         _instant(sample.end),
                         content_hash,
                         encoded,
+                        generation,
                     ),
                 )
                 committed_samples += 1
             for sample_id in batch.deletions:
                 key = (*scope, sample_id)
                 old = db.execute(
-                    "SELECT start, end FROM samples WHERE user_id=? AND sample_type=? AND sample_id=?",
-                    key,
+                    """SELECT start, end FROM samples WHERE user_id=? AND sample_type=?
+                    AND sample_id=? AND owner_generation=?""",
+                    (*key, generation),
                 ).fetchone()
                 if old:
                     affect(_date(old["start"]), _date(old["end"]))
                     db.execute(
-                        "DELETE FROM samples WHERE user_id=? AND sample_type=? AND sample_id=?",
-                        key,
+                        """DELETE FROM samples WHERE user_id=? AND sample_type=?
+                        AND sample_id=? AND owner_generation=?""",
+                        (*key, generation),
                     )
                 result = db.execute(
-                    "INSERT OR IGNORE INTO tombstones VALUES (?, ?, ?, ?)",
-                    (*key, batch.batch_id),
+                    "INSERT OR IGNORE INTO tombstones VALUES (?, ?, ?, ?, ?)",
+                    (*key, batch.batch_id, generation),
                 )
                 committed_deletions += result.rowcount
             if range_exceeded:
@@ -519,7 +692,9 @@ class ArchiveStore:
         ).fetchone()
         return row[0] if row else 0
 
-    def inventory_page(self, query: ArchiveInventoryQuery) -> ArchiveInventoryPage:
+    def inventory_page(
+        self, query: ArchiveInventoryQuery, uploader_secret: str
+    ) -> ArchiveInventoryPage:
         """Read revision and bounded UUID page in one SQLite snapshot.
 
         Membership uses start, not overlap: samples starting before a readable
@@ -551,9 +726,11 @@ class ArchiveStore:
             OverflowError,
         ) as exc:
             raise ArchiveStoreError("invalid_query") from exc
+        digest = self._owner_digest(uploader_secret)
         scope = [query.user_id, query.sample_type, start, end, query.limit]
         after = None
         expected_revision = None
+        expected_generation = None
         if query.cursor is not None:
             try:
                 decoded = json.loads(
@@ -561,31 +738,37 @@ class ArchiveStore:
                 )
                 if (
                     not isinstance(decoded, list)
-                    or len(decoded) != 8
+                    or len(decoded) != 9
                     or decoded[:5] != scope
                     or type(decoded[4]) is not int
                     or type(decoded[5]) is not int
                     or decoded[5] < 0
-                    or any(not isinstance(v, str) for v in decoded[6:])
+                    or type(decoded[6]) is not int
+                    or decoded[6] < 1
+                    or any(not isinstance(v, str) for v in decoded[7:])
                 ):
                     raise ValueError
-                after_start = _instant(_date(decoded[6]))
-                if after_start != decoded[6] or not start <= after_start < end:
+                after_start = _instant(_date(decoded[7]))
+                if after_start != decoded[7] or not start <= after_start < end:
                     raise ValueError
                 # Inventory keys must use the stored canonical lowercase UUID.
-                if str(UUID(decoded[7])) != decoded[7]:
+                if str(UUID(decoded[8])) != decoded[8]:
                     raise ValueError
-                expected_revision, after = decoded[5], decoded[6:]
+                expected_revision, expected_generation, after = decoded[5], decoded[6], decoded[7:]
             except (ValueError, TypeError, UnicodeError, OverflowError) as exc:
                 raise ArchiveStoreError("invalid_cursor") from exc
         with self._connection() as db:
             db.execute("BEGIN")
+            generation = self._assert_owner_in_transaction(db, query.user_id, digest)
+            if expected_generation is not None and expected_generation != generation:
+                raise ArchiveStoreError("owner_changed")
             revision = self._inventory_revision(db, (query.user_id, query.sample_type))
             if expected_revision is not None and revision != expected_revision:
                 raise ArchiveStoreError("inventory_changed")
             sql = """SELECT start, sample_id FROM samples
-                WHERE user_id=? AND sample_type=? AND start>=? AND start<?"""
-            args = [query.user_id, query.sample_type, start, end]
+                WHERE user_id=? AND sample_type=? AND start>=? AND start<?
+                AND owner_generation=?"""
+            args = [query.user_id, query.sample_type, start, end, generation]
             if after:
                 sql += " AND (start, sample_id) > (?, ?)"
                 args.extend(after)
@@ -596,11 +779,11 @@ class ArchiveStore:
         if len(rows) > query.limit:
             cursor = base64.urlsafe_b64encode(
                 _json(
-                    [*scope, revision, page[-1]["start"], page[-1]["sample_id"]]
+                    [*scope, revision, generation, page[-1]["start"], page[-1]["sample_id"]]
                 ).encode()
             ).decode()
         return ArchiveInventoryPage(
-            tuple(row["sample_id"] for row in page), revision, cursor
+            tuple(row["sample_id"] for row in page), revision, cursor, generation
         )
 
     def query_samples(self, query: ArchiveQuery) -> ArchivePage:
@@ -715,14 +898,18 @@ class ArchiveStore:
     def tombstone_page(
         self, user_id: str, sample_type: str, after: str = "", limit: int = 200
     ) -> tuple[dict, ...]:
-        """Bounded UUID keyset; tombstones carry no original date to filter."""
+        """Bounded UUID keyset; expose latest generation while retaining audit rows."""
         if type(limit) is not int or not 1 <= limit <= 500:
             raise ArchiveStoreError("invalid_limit")
         with self._connection() as db:
             rows = db.execute(
-                """SELECT sample_id, batch_id FROM tombstones
-                WHERE user_id=? AND sample_type=? AND sample_id>?
-                ORDER BY sample_id LIMIT ?""",
+                """SELECT t.sample_id, t.batch_id FROM tombstones AS t
+                WHERE t.user_id=? AND t.sample_type=? AND t.sample_id>?
+                AND t.owner_generation=(
+                    SELECT MAX(newer.owner_generation) FROM tombstones AS newer
+                    WHERE newer.user_id=t.user_id AND newer.sample_type=t.sample_type
+                    AND newer.sample_id=t.sample_id)
+                ORDER BY t.sample_id LIMIT ?""",
                 (user_id, sample_type, after, limit),
             ).fetchall()
         return tuple({"uuid": row[0], "batch_id": row[1]} for row in rows)

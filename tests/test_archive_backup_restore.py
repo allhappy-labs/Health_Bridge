@@ -22,13 +22,14 @@ from custom_components.health_bridge.archive_store import (
     ArchiveStore,
     ArchiveStoreError,
 )
+from tests.test_archive_owner import OwnedStore
 
 
 @pytest.fixture
 def seeded(tmp_path):
     (tmp_path / ".storage").mkdir(exist_ok=True)
     path = tmp_path / ".storage/health_bridge_archive.sqlite"
-    store = ArchiveStore.open(path)
+    store = OwnedStore(ArchiveStore.open(path))
     payload = json.loads(Path("docs/protocol/fixtures/archive-batch-v2.json").read_text())
     original = deepcopy(payload["samples"][0])
     deleted = deepcopy(original)
@@ -64,7 +65,7 @@ def test_checkpoint_copy_restores_all_durable_state(seeded, tmp_path):
         store.end_backup()
         keeper.close()
 
-    restored = ArchiveStore.open(restored_path)
+    restored = OwnedStore(ArchiveStore.open(restored_path))
     detail = restored.sample_detail("person-1", first.sample_type, original["uuid"])
     assert {key: detail[key] for key in original if key not in {"start", "end"}} == {
         key: value for key, value in original.items() if key not in {"start", "end"}
@@ -81,7 +82,7 @@ def test_checkpoint_copy_restores_all_durable_state(seeded, tmp_path):
                          datetime(2024, 1, 2, tzinfo=timezone.utc))
     assert [sample.uuid for sample in restored.query_samples(query).samples] == [original["uuid"]]
     with sqlite3.connect(restored_path) as db:
-        assert db.execute("PRAGMA user_version").fetchone() == (2,)
+        assert db.execute("PRAGMA user_version").fetchone() == (3,)
         assert db.execute("SELECT user_id, sample_type, revision FROM inventory_revisions").fetchall() == [
             ("person-1", first.sample_type, 2),
         ]
@@ -208,7 +209,7 @@ async def test_real_ha_backup_engine_includes_archive(hass, seeded, tmp_path, in
                 path.write_bytes(inner.extractfile(member).read())
         with sqlite3.connect(path) as db:
             assert db.execute("PRAGMA integrity_check").fetchone() == ("ok",)
-            assert db.execute("PRAGMA user_version").fetchone() == (2,)
+            assert db.execute("PRAGMA user_version").fetchone() == (3,)
             assert db.execute("SELECT count(*) FROM samples").fetchone() == (1,)
             assert db.execute("SELECT count(*) FROM tombstones").fetchone() == (1,)
             assert db.execute("SELECT count(*) FROM receipts").fetchone() == (2,)

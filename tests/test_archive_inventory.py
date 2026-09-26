@@ -24,6 +24,7 @@ from tests.test_archive_webhook import (
     PAL_TOKEN,
     USER,
 )
+from tests.test_archive_owner import OwnedStore
 
 TYPE = "HKQuantityTypeIdentifierStepCount"
 START = datetime.fromisoformat("2024-01-01T00:00:00+00:00")
@@ -76,7 +77,7 @@ async def archive_client(bridge_client, bridge_entries, hass):
 
 @pytest.fixture
 def store(tmp_path):
-    return api.ArchiveStore.open(tmp_path / "archive.sqlite")
+    return OwnedStore(api.ArchiveStore.open(tmp_path / "archive.sqlite"))
 
 
 def test_inventory_pages_same_time_ids_and_scope(store):
@@ -160,7 +161,7 @@ def test_stale_conditional_delete_rolls_back_all_state_and_retry_is_exact(store)
     assert receipt.committed_deletions == 1
     assert store.inventory_page(query()).sample_ids == ()
     assert store.inventory_page(query()).revision == 3
-    reopened = api.ArchiveStore.open(store._path)
+    reopened = OwnedStore(api.ArchiveStore.open(store._path))
     assert reopened.commit_batch(deletion) == receipt
     assert reopened.inventory_page(query()).revision == 3
 
@@ -172,7 +173,7 @@ def test_two_concurrent_conditional_deletes_cannot_share_revision(store):
 
     def delete(index):
         # Separate store instances exercise SQLite's transaction lock, not RLock.
-        writer = api.ArchiveStore.open(store._path)
+        writer = OwnedStore(api.ArchiveStore.open(store._path))
         batch = validate_archive_request(
             payload(
                 batch_id=f"delete-{index}",
@@ -217,12 +218,12 @@ def test_malformed_cursor_is_redacted(store, cursor):
 def test_migrates_schema_one_preserving_originals_and_receipts(tmp_path):
     path = tmp_path / "old.sqlite"
     # Build an actual v1 schema and populate it using a committed legacy payload.
-    store = api.ArchiveStore.open(path)
+    store = OwnedStore(api.ArchiveStore.open(path))
     first = commit(store)
     with sqlite3.connect(path) as db:
         db.execute("DROP TABLE inventory_revisions")
         db.execute("PRAGMA user_version=1")
-    migrated = api.ArchiveStore.open(path)
+    migrated = OwnedStore(api.ArchiveStore.open(path))
     page = migrated.inventory_page(query())
     assert page.sample_ids == (payload()["samples"][0]["uuid"],)
     assert page.revision == 1
@@ -230,7 +231,7 @@ def test_migrates_schema_one_preserving_originals_and_receipts(tmp_path):
     commit(migrated, batch_id="new")
     assert migrated.inventory_page(query()).revision == 2
     with sqlite3.connect(path) as db:
-        assert db.execute("PRAGMA user_version").fetchone() == (2,)
+        assert db.execute("PRAGMA user_version").fetchone() == (3,)
 
 
 @pytest.mark.parametrize("limit", [0, 201, True, 1.5])

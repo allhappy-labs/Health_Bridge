@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 ARCHIVE_PROTOCOL_VERSION = 2
-ARCHIVE_SCHEMA_VERSION = 2
+ARCHIVE_SCHEMA_VERSION = 3
 PAYLOAD_SCHEMA_VERSION = 1
 MAX_ARCHIVE_BATCH_BYTES = 262_144
 MAX_ARCHIVE_SAMPLES_PER_BATCH = 200
@@ -133,6 +133,7 @@ class ArchiveInventoryPage:
     sample_ids: tuple[str, ...]
     revision: int
     next_cursor: str | None
+    owner_generation: int = 0
 
     def as_dict(self, request_id: str) -> dict[str, Any]:
         return {
@@ -143,6 +144,7 @@ class ArchiveInventoryPage:
             "sample_ids": list(self.sample_ids),
             "revision": self.revision,
             "next_cursor": self.next_cursor,
+            "owner_generation": self.owner_generation,
         }
 
 

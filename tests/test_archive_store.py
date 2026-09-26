@@ -16,6 +16,7 @@ from custom_components.health_bridge.archive_protocol import (
     ArchiveProtocolError,
     validate_archive_request,
 )
+from tests.test_archive_owner import NOW, OwnedStore, SECRET_A
 
 
 TYPE = "HKQuantityTypeIdentifierStepCount"
@@ -39,7 +40,7 @@ def payload():
 
 @pytest.fixture
 def store(api, tmp_path):
-    return api.ArchiveStore.open(tmp_path / "archive.sqlite3")
+    return OwnedStore(api.ArchiveStore.open(tmp_path / "archive.sqlite3"))
 
 
 def batch(payload, batch_id=None):
@@ -68,7 +69,7 @@ def test_schema_is_versioned_indexed_and_wal_safe(api, tmp_path):
     path = tmp_path / "archive.sqlite3"
     api.ArchiveStore.open(path)
     with sqlite3.connect(path) as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 3
         assert db.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         tables = {
             r[0]
@@ -90,7 +91,7 @@ def test_schema_is_versioned_indexed_and_wal_safe(api, tmp_path):
 def test_newer_schema_is_rejected_without_modification(api, tmp_path):
     path = tmp_path / "future.sqlite3"
     with sqlite3.connect(path) as db:
-        db.execute("PRAGMA user_version=3")
+        db.execute("PRAGMA user_version=4")
     before = path.read_bytes()
     with pytest.raises(api.ArchiveStoreError, match="unsupported_schema"):
         api.ArchiveStore.open(path)
@@ -122,7 +123,7 @@ def test_extreme_interval_archives_raw_with_one_failed_repair_job(
         restored_path = tmp_path / "restored.sqlite"
         with sqlite3.connect(restored_path) as restored:
             db.backup(restored)
-    reopened = api.ArchiveStore.open(restored_path)
+    reopened = OwnedStore(api.ArchiveStore.open(restored_path))
     assert reopened.commit_batch(value) == receipt
     assert reopened.projection_status("person-1")[TYPE] == ("failed", "projection_range_exceeded")
 
@@ -169,7 +170,7 @@ def test_migrated_schema_one_extreme_original_is_retained_but_replay_is_bounded(
         db.execute("UPDATE samples SET start=?, end=?, sample_json=?", (row["start"], row["end"], json.dumps(row)))
         db.execute("DROP TABLE inventory_revisions")
         db.execute("PRAGMA user_version=1")
-    migrated = api.ArchiveStore.open(store._path)
+    migrated = OwnedStore(api.ArchiveStore.open(store._path))
     assert migrated.commit_batch(value) == receipt
     assert migrated.sample_detail("person-1", TYPE, UUID)["end"].startswith("9999-")
     with pytest.raises(ValueError, match="^projection_range_exceeded$"):
@@ -203,7 +204,7 @@ def test_schema_upgrade_while_waiting_for_migration_lock_is_rejected(
                 # Another process can upgrade after the initial unlocked read.
                 other = connect(path)
                 try:
-                    other.execute("PRAGMA user_version=3")
+                    other.execute("PRAGMA user_version=4")
                 finally:
                     other.close()
             return super().execute(sql, parameters)
@@ -244,7 +245,7 @@ def test_identical_retry_returns_original_receipt_after_restart(
     receipt = store.commit_batch(batch(payload))
     assert receipt.committed_samples == 1
     assert receipt.projection_state == "pending"
-    reopened = api.ArchiveStore.open(tmp_path / "archive.sqlite3")
+    reopened = OwnedStore(api.ArchiveStore.open(tmp_path / "archive.sqlite3"))
     assert reopened.commit_batch(batch(payload)) == receipt
     assert len(reopened.query_samples(query(api)).samples) == 1
     assert len(reopened.claim_projection_jobs(10)) == 1
@@ -418,7 +419,7 @@ def test_claim_completion_failure_and_expired_restart_recovery(
     claimed = store.claim_projection_jobs(10)
     assert len(claimed) == 1
     assert store.claim_projection_jobs(10) == ()
-    reopened = api.ArchiveStore.open(tmp_path / "archive.sqlite3")
+    reopened = OwnedStore(api.ArchiveStore.open(tmp_path / "archive.sqlite3"))
     assert reopened.claim_projection_jobs(10) == ()
     freezer.tick(301)
     retried = reopened.claim_projection_jobs(10)
@@ -513,7 +514,7 @@ def test_typed_payload_and_provenance_survive_reopen(
     payload["samples"][0]["device"] = {"manufacturer": "Example", "model": "Watch"}
     value = batch(payload)
     store.commit_batch(value)
-    reopened = api.ArchiveStore.open(tmp_path / "archive.sqlite3")
+    reopened = OwnedStore(api.ArchiveStore.open(tmp_path / "archive.sqlite3"))
     result = reopened.query_samples(replace(query(api), sample_type=sample_type))
     assert result.samples == value.samples
 
@@ -542,8 +543,10 @@ async def test_all_store_operations_can_run_in_executor_only(api, tmp_path, payl
 
     store = await asyncio.to_thread(api.ArchiveStore.open, tmp_path / "archive.sqlite3")
     value = batch(payload)
+    claim = await asyncio.to_thread(store.claim_owner, "person-1", SECRET_A, NOW)
+    await asyncio.to_thread(store.approve_owner, "person-1", claim.claim_id, NOW)
     for operation, args in (
-        (store.commit_batch, (value,)),
+        (store.commit_batch, (value, SECRET_A)),
         (store.query_samples, (query(api),)),
         (store.claim_projection_jobs, (1,)),
         (store.complete_projection_job, ("job-id",)),
@@ -552,6 +555,6 @@ async def test_all_store_operations_can_run_in_executor_only(api, tmp_path, payl
     ):
         with pytest.raises(api.ArchiveStoreError, match="executor_required"):
             operation(*args)
-    await asyncio.to_thread(store.commit_batch, value)
+    await asyncio.to_thread(store.commit_batch, value, SECRET_A)
     page = await asyncio.to_thread(store.query_samples, query(api))
     assert len(page.samples) == 1

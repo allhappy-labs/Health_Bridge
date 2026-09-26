@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+.venv/
+.uv-cache/
+.pytest_cache/
+.ruff_cache/
+.installed-verification/

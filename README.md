@@ -1,5 +1,15 @@
 # Health Bridge
 
+> **Archive fork prerelease `2.1.1a1`.** This checkout adds durable original
+> HealthKit samples, long-term numeric statistics, and an administrator archive
+> browser while preserving upstream v2.1.0 HAL/PAL and v1 compatibility.
+> Requires **Home Assistant 2026.9.3+ / Python 3.14.2+**. The v2 catalog covers
+> 107 direct metrics; the legacy live registry still has all 111 keys.
+> Read [installation, upgrade, backup, restore, export and deletion](docs/archive-operations.md).
+> Public fork/HACS publication is pending; upstream links below describe the
+> original project and do not install this archive feature. A v2-capable client
+> is required. Installed iOS full-history qualification remains separate.
+
 <p align="center">
   <img src="https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/8c/0a/b3/8c0ab330-3e85-27b2-8532-e1f912c29fb6/AppIcon-0-0-1x_U007ephone-0-1-85-220.png/460x0w.webp" alt="Health Assistant Link Icon" width="120"/>
   <img src="https://is1-ssl.mzstatic.com/image/thumb/PurpleSource221/v4/77/b8/20/77b82043-ced8-8c60-fc24-a92c09aa53a6/Placeholder.mill/1024x1024bb.png" alt="Phone Assistant Link Icon" width="120"/>
@@ -50,18 +60,24 @@ You’ll need the companion iOS app installed on your iPhone:
 
 The app is **free to use**. Automated syncing is available as an optional paid upgrade.
 
-### 2. Install Health Bridge via HACS
-This integration is available in [HACS](https://hacs.xyz/). You must have HACS set up in your Home Assistant instance first.
+### 2. Install this archive fork
 
-Once HACS is installed, add **Health Bridge** using the repository link below:
-
-[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?category=integration&repository=health_bridge&owner=gregt1993)
+Follow the [fork installation guide](docs/archive-operations.md#install-and-upgrade-from-v210)
+to install the reviewed `custom_components/health_bridge` directory while Home
+Assistant is stopped. Existing upstream entries and tokens are retained.
+HACS installation of this fork is pending publication to a verified fork URL.
+The upstream HACS repository contains upstream Health Bridge without this
+archive implementation.
 
 ---
 
 ## ⚙️ Setup
 
 ### Home Assistant Setup
+The steps and screenshots below describe upstream's HACS setup. For this
+archive prerelease, install using the fork guide above, then use step 5 only
+when creating a new HAL or PAL entry; do not recreate existing entries.
+
 1. Install the **Health Bridge** integration from HACS.  
    <img width="600" alt="image" src="https://github.com/user-attachments/assets/33c515ff-9a2f-4318-86e8-6226b8699a39" />
 

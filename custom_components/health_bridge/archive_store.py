@@ -19,6 +19,7 @@ import json
 from pathlib import Path
 import re
 import sqlite3
+from threading import RLock
 from typing import Any, Iterator
 from uuid import uuid4
 
@@ -244,6 +245,8 @@ class ArchiveStore:
 
     def __init__(self, path: Path) -> None:
         self._path = path
+        self._access_lock = RLock()
+        self._backup_in_progress = False
 
     @classmethod
     def open(cls, path: str | Path) -> ArchiveStore:
@@ -268,6 +271,16 @@ class ArchiveStore:
     @contextmanager
     def _connection(self) -> Iterator[sqlite3.Connection]:
         _executor_only()
+        # Drain operations before checkpointing and reject new work until HA
+        # finishes copying the configuration. No thread owns a lock across hooks.
+        with self._access_lock:
+            if self._backup_in_progress:
+                raise ArchiveStoreError("backup_in_progress")
+            with self._database() as db:
+                yield db
+
+    @contextmanager
+    def _database(self) -> Iterator[sqlite3.Connection]:
         db = sqlite3.connect(self._path, timeout=30, isolation_level=None)
         db.row_factory = sqlite3.Row
         try:
@@ -282,6 +295,30 @@ class ArchiveStore:
             raise
         finally:
             db.close()
+
+    def begin_backup(self) -> None:
+        """Checkpoint acknowledged writes and freeze this store during HA backup.
+
+        Only this integration owns the file. External writers must be stopped;
+        the process-local fence cannot control unrelated SQLite connections.
+        A busy checkpoint aborts the backup instead of allowing a partial copy.
+        """
+        _executor_only()
+        with self._access_lock:
+            if self._backup_in_progress:
+                return
+            with self._connection() as db:
+                db.execute("PRAGMA busy_timeout=1000")
+                busy, _, _ = db.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+                if busy:
+                    raise ArchiveStoreError("backup_checkpoint_busy")
+            self._backup_in_progress = True
+
+    def end_backup(self) -> None:
+        """Resume archive work, also when a backup failed after pre-backup."""
+        _executor_only()
+        with self._access_lock:
+            self._backup_in_progress = False
 
     def commit_batch(self, batch: ArchiveBatch) -> ArchiveReceipt:
         """Atomically accept a validated batch, or return its exact prior receipt.

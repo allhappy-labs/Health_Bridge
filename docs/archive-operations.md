@@ -31,12 +31,18 @@ claimed to support it. Full-history iOS qualification remains a separate gate.
    Only one integration with this domain may be installed.
 3. Start HA. Both existing entries should load without being recreated. Check
    their HAL live and PAL ping routes, then query `archive_capability` over the
-   existing `/api/webhook/health_bridge` route using the HAL token. Expect schema
-   2, protocol 2, 107 supported metrics from 99 source types, and both archive/statistics availability
-   true when recorder is ready. PAL credentials cannot upload an archive.
+   existing `/api/webhook/health_bridge` route using the HAL token and intended
+   phone's device-local uploader credential. Expect schema 3, ownership contract
+   1, protocol 2, 107 supported metrics from 99 source types, and both
+   archive/statistics availability true when recorder is ready. PAL credentials
+   cannot upload an archive.
 4. Add the `custom:health-bridge-archive` card using an administrator account;
-   the integration registers its JavaScript resource automatically. Browse a
-   small synthetic or explicitly chosen import before expanding scope. Keep
+   the integration registers its JavaScript resource automatically. Claim the
+   user from the intended phone, compare its fingerprint with the pending
+   claim in the admin card, and explicitly approve it. Before approving a
+   replacement, back up HA; approval revokes the old phone's v2 access while
+   retaining old-only originals. Browse a small synthetic or explicitly chosen
+   import before expanding scope. Keep
    `samples archived` distinct from `statistics current`.
 
 See [protocol requests](protocol/archive-v2.md), [archive card](archive-browser.md),
@@ -62,8 +68,9 @@ fork during updates. This task does not create or publish a remote.
 Originals and recovery state live in
 `<HA config>/.storage/health_bridge_archive.sqlite`, separate from
 `home-assistant_v2.db`. SQLite may also create `-wal` and `-shm` sidecars. Archive
-schema 2 includes originals, tombstones, idempotent receipts, coverage intervals
-and authorization bounds, inventory revisions, and pending/claimed/failed projection jobs. SQLite
+schema 3 includes originals, generation-scoped tombstones, idempotent receipts,
+coverage intervals and authorization bounds, inventory revisions, owner digests,
+pending claims, and pending/claimed/failed projection jobs. SQLite
 transactions commit all of those before acknowledgement. Expired claimed jobs
 become eligible again after their five-minute lease.
 
@@ -85,7 +92,7 @@ Correct or delete oversized originals at the source, sync those changes, then
 use Retry in the archive card. Retry checks all surviving intervals before
 clearing or writing recorder statistics. Batch-budget failures with individually
 valid intervals can be retried directly. Originals remain browsable/exportable.
-The failure intent uses the existing schema-2 outbox and survives backup/restore.
+The failure intent uses the durable outbox and survives backup/restore.
 
 Store and backup access exposes sensitive health records, source/device
 provenance and authorization bounds. Protect the HA configuration directory,
@@ -93,6 +100,9 @@ backup encryption keys, exports and administrator credentials. HAL credentials
 are integration-level authority; old entries without configured `user_id`
 binding trust the authenticated client's claimed user ID. They are not a
 per-person isolation boundary. Archive UI/API access is administrator-only.
+The phone keeps its uploader credential in a non-synchronizing Keychain item;
+HA stores only a digest. A replacement or lost Keychain credential needs a new
+claim and explicit administrator approval. Transfer alone retains old originals.
 
 ## Backup
 
@@ -129,9 +139,9 @@ HA configuration when preserving entry identities and credentials.
    the old main file and its sidecars aside together before installing the
    checkpointed replacement while HA is stopped.
 3. Run SQLite `PRAGMA integrity_check` (expect `ok`), `PRAGMA foreign_key_check`
-   (expect no rows), and `PRAGMA user_version` (expect `2` for this release).
+   (expect no rows), and `PRAGMA user_version` (expect `3` for this release).
    Install the matching fork code and restart HA. Verify raw sample UUIDs,
-   repeated batch receipts, coverage, and projection status. Pending work
+   repeated batch receipts, uploader generation, coverage, and projection status. Pending work
    resumes; claimed jobs wait at most their remaining five-minute lease.
 4. A backup predates later imports. Reconcile/rescan missing intervals from the
    source client; do not assume the client's newer local checkpoint means the
@@ -184,12 +194,16 @@ PYTHONDONTWRITEBYTECODE=1 .venv/bin/python tests/installed_smoke.py
 The log scan should exit 1 with no matches. The installed smoke test always
 creates a new `.installed-verification/run-*` configuration, binds only to
 loopback, installs the local component, creates disposable HAL/PAL entries and
-an administrator, submits synthetic 2024 fixtures, backs up, stops/restarts HA,
-purges only that disposable recorder, and reads raw originals and hourly
+an administrator, claims and approves two synthetic phone credentials in turn,
+verifies wrong/revoked phone rejection, retains an old-only original, reuploads
+and deletes a shared UUID under the new generation, submits synthetic 2024
+fixtures, backs up, restores the archive into the stopped disposable config,
+restarts HA, purges only that disposable recorder, and reads raw originals and hourly
 statistics back through authenticated HTTP/WebSocket APIs. It records HA
 version, fork SHA, working-tree dirtiness, schema, and observations in
 `verification.json`. Never point a diagnostic purge at a real installation.
-The verifier waits for both entries to report loaded and requires normal process
+The verifier waits for both entries to report loaded, checks each owner
+transition, and requires normal process
 exit. The local macOS/Homebrew Python 3.14.7 environment currently exposes a
 native interpreter-finalization crash on HA shutdown; successful functional
 checks before shutdown do not satisfy that shutdown gate. Forced cleanup kills

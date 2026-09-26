@@ -135,3 +135,18 @@ def test_container_gate_requires_exact_clean_fork_sha():
     with pytest.raises(AssertionError):
         installed_smoke.assert_expected_source({**report, "working_tree_dirty": True},
                                                "container", "expected")
+
+
+def test_installed_gate_requires_every_owner_transition():
+    required = {
+        "unbound_rejected", "first_admin_approval", "wrong_phone_rejected",
+        "transfer_admin_approval", "revoked_phone_rejected",
+        "old_only_original_preserved", "same_uuid_reuploaded_and_deleted",
+        "exact_receipt_retry", "backup_restored_owner_and_archive",
+    }
+    report = {"checks": {key: True for key in required}}
+    installed_smoke.assert_owner_checks(report)
+    for key in required:
+        incomplete = {"checks": {**report["checks"], key: False}}
+        with pytest.raises(AssertionError, match=key):
+            installed_smoke.assert_owner_checks(incomplete)

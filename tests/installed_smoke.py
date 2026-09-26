@@ -31,8 +31,12 @@ import aiohttp
 ROOT = Path(__file__).resolve().parents[1]
 HAL = "installed-smoke-hal-synthetic-token-00001"
 PAL = "installed-smoke-pal-synthetic-token-00001"
+PHONE_A = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+PHONE_B = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE"
 TYPE = "HKQuantityTypeIdentifierStepCount"
 USER = "person-1"
+SAMPLE_A = "bd085ccc-22f4-4e80-a865-149bb5b0d1d4"
+SAMPLE_B = "bd085ccc-22f4-4e80-a865-149bb5b0d1d5"
 SID = "health_bridge:steps_" + hashlib.sha256(USER.encode()).hexdigest()[:32]
 CONTAINER_IMAGE = "ghcr.io/home-assistant/home-assistant@sha256:d8922685169707fd91e8b9729902d975f06157d005e422874d201e0261dda196"
 CONTAINER_HA_VERSION = "2026.9.3"
@@ -144,6 +148,19 @@ def assert_expected_source(report, runtime, expected_sha):
         assert not report["working_tree_dirty"], "Fork checkout is dirty"
 
 
+OWNER_CHECKS = (
+    "unbound_rejected", "first_admin_approval", "wrong_phone_rejected",
+    "transfer_admin_approval", "revoked_phone_rejected",
+    "old_only_original_preserved", "same_uuid_reuploaded_and_deleted",
+    "exact_receipt_retry", "backup_restored_owner_and_archive",
+)
+
+
+def assert_owner_checks(report):
+    for name in OWNER_CHECKS:
+        assert report["checks"].get(name) is True, name
+
+
 async def main(runtime="local", expected_sha=None):
     runs = ROOT / ".installed-verification"
     runs.mkdir(exist_ok=True)
@@ -221,6 +238,11 @@ recorder:
                 assert response.status < 400, (path, response.status, await response.text())
                 return await response.json()
 
+        async def response(method, path, *, auth=True, **kwargs):
+            headers = {"Authorization": f"Bearer {access}"} if auth and access else {}
+            async with session.request(method, base + path, headers=headers, **kwargs) as result:
+                return result.status, await result.json()
+
         async def wait_ready():
             for _ in range(120):
                 assert process.poll() is None, f"HA exited {process.returncode}; inspect {config}/process.log"
@@ -233,9 +255,28 @@ recorder:
                 await asyncio.sleep(1)
             raise AssertionError("HA startup timed out")
 
+        async def webhook_response(payload, token=HAL):
+            return await response("POST", "/api/webhook/health_bridge", auth=False,
+                                  json={"token": token, "user_id": USER, **payload})
+
         async def webhook(payload, token=HAL):
-            return await request("POST", "/api/webhook/health_bridge", auth=False,
-                                 json={"token": token, "user_id": USER, **payload})
+            status, body = await webhook_response(payload, token)
+            assert status < 400, (payload["request_type"], status, body)
+            return body
+
+        def control(kind, credential, request_id):
+            return {"request_type": kind, "protocol_version": 2,
+                    "request_id": request_id, "uploader_credential": credential}
+
+        async def approve(claim, generation):
+            owner = await request("GET", f"/api/health_bridge/archive/{USER}/owner")
+            assert owner["pending_claim"]["claim_id"] == claim["claim_id"]
+            assert owner["pending_claim"]["fingerprint"] == claim["fingerprint"]
+            approved = await request("POST", f"/api/health_bridge/archive/{USER}/owner-approve",
+                                     json={"claim_id": claim["claim_id"],
+                                           "confirm_user_id": USER, "confirm": "APPROVE"})
+            assert approved["owner_generation"] == generation, approved
+            return approved
 
         async def wait_entries_loaded():
             for _ in range(120):
@@ -247,17 +288,16 @@ recorder:
                 await asyncio.sleep(1)
             raise AssertionError("Health Bridge entries did not load")
 
-        async def wait_current():
+        async def wait_current(credential=PHONE_A):
             for _ in range(90):
-                status = await webhook({"request_type": "archive_status", "protocol_version": 2,
-                                        "request_id": "installed-status"})
+                status = await webhook(control("archive_status", credential, "installed-status"))
                 metrics = status["metrics"]
                 if metrics and all(item["state"] == "current" for item in metrics):
                     return status
                 await asyncio.sleep(1)
             raise AssertionError(f"Statistics not current: {status}")
 
-        async def statistics():
+        async def statistics(expected_sum):
             async with session.ws_connect(base + "/api/websocket") as ws:
                 assert (await ws.receive_json())["type"] == "auth_required"
                 await ws.send_json({"type": "auth", "access_token": access})
@@ -268,15 +308,14 @@ recorder:
                 result = await ws.receive_json()
                 assert result["success"], result
                 rows = result["result"][SID]
-                assert len(rows) == 1 and rows[0]["sum"] == 12, rows
+                assert len(rows) == 1 and rows[0]["sum"] == expected_sum, rows
                 return rows
 
-        async def raw():
+        async def raw(expected):
             result = await request("GET", f"/api/health_bridge/archive/{USER}/samples", params={
                 "sample_type": TYPE, "start": "2024-01-01T00:00:00Z", "end": "2024-01-02T00:00:00Z"})
-            assert len(result["samples"]) == 1
-            assert result["samples"][0]["uuid"] == "bd085ccc-22f4-4e80-a865-149bb5b0d1d4"
-            assert result["samples"][0]["payload"]["raw_value"] == 12
+            assert {item["uuid"]: item["payload"]["raw_value"]
+                    for item in result["samples"]} == expected, result
             return result
 
         try:
@@ -307,17 +346,74 @@ recorder:
             backfill = await webhook({"request_type": "backfill", "protocol_version": 1, "request_id": "installed-backfill", "data": {"steps": [{"timestamp": (now - timedelta(days=2)).isoformat(), "value": 7}, {"timestamp": now.isoformat(), "value": 42}]}})
             assert backfill["committed"] is True, backfill
             report["checks"]["v1_live_backfill_pal"] = True
-            capability = await webhook({"request_type": "archive_capability", "protocol_version": 2, "request_id": "installed-capability"})
+            fixture = json.loads((ROOT / "docs/protocol/fixtures/archive-batch-v2.json").read_text())
+            fixture["uploader_credential"] = PHONE_A
+            fixture["samples"].append({**fixture["samples"][0], "uuid": SAMPLE_B,
+                                       "start": "2024-01-01T10:30:00Z",
+                                       "end": "2024-01-01T10:30:01Z",
+                                       "payload": {**fixture["samples"][0]["payload"],
+                                                   "raw_value": 5, "canonical_value": 5}})
+            denied_status, denied = await webhook_response(fixture)
+            assert denied_status == 403 and denied["error"] == "owner_required", denied
+            report["checks"]["unbound_rejected"] = True
+            first_claim = await webhook(control("archive_owner_claim", PHONE_A, "claim-a"))
+            assert first_claim["owner_state"] == "pending" and first_claim["owner_generation"] == 0
+            await approve(first_claim, 1)
+            report["checks"]["first_admin_approval"] = True
+            capability = await webhook(control("archive_capability", PHONE_A, "installed-capability"))
             assert capability["archive_available"] and capability["statistics_available"]
             assert len(capability["supported_metrics"]) == 107
+            assert capability["archive_schema_version"] == 3
+            assert capability["ownership_contract_version"] == 1
+            assert capability["owner_state"] == "active" and capability["owner_generation"] == 1
             report["capability"] = capability
-            fixture = json.loads((ROOT / "docs/protocol/fixtures/archive-batch-v2.json").read_text())
             ack = await webhook(fixture)
-            assert ack["committed_samples"] == 1
+            assert ack["committed_samples"] == 2
+            assert await webhook(fixture) == ack
+            report["checks"]["exact_receipt_retry"] = True
             report["archive_receipt"] = ack
             report["statistics_before_restart"] = await wait_current()
-            report["raw_before_restart"] = await raw()
-            report["statistics_readback_before_restart"] = await statistics()
+            report["raw_before_restart"] = await raw({SAMPLE_A: 12, SAMPLE_B: 5})
+            report["statistics_readback_before_restart"] = await statistics(17)
+            wrong_status, wrong = await webhook_response(control("archive_status", PHONE_B, "wrong-status"))
+            assert wrong_status == 403 and wrong["error"] == "owner_changed", wrong
+            report["checks"]["wrong_phone_rejected"] = True
+            second_claim = await webhook(control("archive_owner_claim", PHONE_B, "claim-b"))
+            assert second_claim["owner_state"] == "pending" and second_claim["owner_generation"] == 1
+            await approve(second_claim, 2)
+            report["checks"]["transfer_admin_approval"] = True
+            revoked_status, revoked = await webhook_response(fixture)
+            assert revoked_status == 403 and revoked["error"] == "owner_changed", revoked
+            report["checks"]["revoked_phone_rejected"] = True
+            inventory = {**control("archive_inventory", PHONE_B, "inventory-b"),
+                         "sample_type": TYPE, "start": "2024-01-01T00:00:00Z",
+                         "end": "2024-01-02T00:00:00Z", "limit": 200, "cursor": None}
+            page = await webhook(inventory)
+            assert page["sample_ids"] == [] and page["owner_generation"] == 2, page
+            deletion = {**fixture, "uploader_credential": PHONE_B,
+                        "request_id": "delete-old-a", "batch_id": "delete-old-a",
+                        "samples": [], "deletions": [SAMPLE_A]}
+            await webhook(deletion)
+            await raw({SAMPLE_A: 12, SAMPLE_B: 5})
+            await statistics(17)
+            report["checks"]["old_only_original_preserved"] = True
+            reupload = {**fixture, "uploader_credential": PHONE_B,
+                        "request_id": "reupload-a", "batch_id": "reupload-a",
+                        "samples": [fixture["samples"][0]], "deletions": []}
+            reupload_ack = await webhook(reupload)
+            assert reupload_ack["committed_samples"] == 1
+            assert await webhook(reupload) == reupload_ack
+            current_page = await webhook({**inventory, "request_id": "inventory-current"})
+            assert current_page["sample_ids"] == [SAMPLE_A], current_page
+            final_delete = {**deletion, "request_id": "delete-current-a",
+                            "batch_id": "delete-current-a"}
+            delete_ack = await webhook(final_delete)
+            assert delete_ack["committed_deletions"] == 1
+            assert await webhook(final_delete) == delete_ack
+            await wait_current(PHONE_B)
+            await raw({SAMPLE_B: 5})
+            await statistics(5)
+            report["checks"]["same_uuid_reuploaded_and_deleted"] = True
             await request("POST", "/api/services/backup/create", json={})
             for _ in range(60):
                 backups = list((config / "backups").glob("*.tar"))
@@ -336,18 +432,35 @@ recorder:
             with sqlite3.connect(restored) as db:
                 assert db.execute("PRAGMA integrity_check").fetchone() == ("ok",)
                 assert db.execute("SELECT count(*) FROM samples").fetchone() == (1,)
+                assert db.execute("SELECT owner_generation FROM samples").fetchone() == (1,)
+                assert db.execute("SELECT generation FROM archive_owners").fetchone() == (2,)
                 report["archive_schema"] = db.execute("PRAGMA user_version").fetchone()[0]
+                assert report["archive_schema"] == 3
             report["checks"]["ha_backup_contains_restorable_archive"] = True
             await stop()
             assert shutdown_clean(report["shutdowns"][-1], runtime), report["shutdowns"][-1]
+            # Restore the checkpointed archive from HA's backup into only this
+            # stopped disposable configuration. Keep its prior files for audit.
+            archive_path = config / ".storage/health_bridge_archive.sqlite"
+            for suffix in ("", "-wal", "-shm"):
+                candidate = Path(str(archive_path) + suffix)
+                if candidate.exists():
+                    candidate.rename(config / ("pre-restore-archive.sqlite" + suffix))
+            shutil.copyfile(restored, archive_path)
             process = start()
             await wait_ready()
             await wait_entries_loaded()
-            retry = await webhook(fixture)
-            assert retry == ack
+            retry = await webhook(final_delete)
+            assert retry == delete_ack
             report["checks"]["restart_receipt_idempotence"] = True
-            await wait_current()
-            report["raw_after_restart"] = await raw()
+            restored_capability = await webhook(control("archive_capability", PHONE_B, "restored-capability"))
+            assert restored_capability["owner_state"] == "active"
+            assert restored_capability["owner_generation"] == 2
+            restored_status, restored_error = await webhook_response(control("archive_status", PHONE_A, "restored-old"))
+            assert restored_status == 403 and restored_error["error"] == "owner_changed"
+            report["checks"]["backup_restored_owner_and_archive"] = True
+            await wait_current(PHONE_B)
+            report["raw_after_restart"] = await raw({SAMPLE_B: 5})
             recorder = config / "home-assistant_v2.db"
             cutoff = (now - timedelta(days=1)).timestamp()
 
@@ -362,9 +475,10 @@ recorder:
                 await asyncio.sleep(1)
             assert old_states() == 0
             report["checks"]["recorder_old_rows_purged"] = True
-            report["raw_after_purge"] = await raw()
-            report["statistics_readback_after_purge"] = await statistics()
+            report["raw_after_purge"] = await raw({SAMPLE_B: 5})
+            report["statistics_readback_after_purge"] = await statistics(5)
             report["checks"]["post_purge_raw_and_statistics"] = True
+            assert_owner_checks(report)
             print(json.dumps({key: value for key, value in report.items() if key in {"fork_sha", "working_tree_dirty", "homeassistant_version", "integration_version", "archive_schema", "checks"}}, indent=2), flush=True)
         finally:
             await stop()

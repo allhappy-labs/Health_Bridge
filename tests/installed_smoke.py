@@ -1,10 +1,12 @@
 """Opt-in installed smoke test; always creates its own loopback-only HA config.
 
 Run: PYTHONDONTWRITEBYTECODE=1 .venv/bin/python tests/installed_smoke.py
+Container: PYTHONDONTWRITEBYTECODE=1 .venv/bin/python tests/installed_smoke.py --runtime container
 No production URL/config can be supplied. Only synthetic health data is used.
 """
 
 import asyncio
+import argparse
 from datetime import datetime, timedelta, timezone
 import hashlib
 import io
@@ -31,6 +33,7 @@ PAL = "installed-smoke-pal-synthetic-token-00001"
 TYPE = "HKQuantityTypeIdentifierStepCount"
 USER = "person-1"
 SID = "health_bridge:steps_" + hashlib.sha256(USER.encode()).hexdigest()[:32]
+CONTAINER_IMAGE = "ghcr.io/home-assistant/home-assistant@sha256:d8922685169707fd91e8b9729902d975f06157d005e422874d201e0261dda196"
 
 
 async def stop_owned_process(process, *, timeout=40):
@@ -47,7 +50,41 @@ async def stop_owned_process(process, *, timeout=40):
         return True
 
 
-async def main():
+def container_command(config, port, name):
+    """Launch only the pinned image with this disposable config and loopback port."""
+    return [
+        "docker", "run", "--rm", "--pull=never", "--name", name,
+        "--network", "bridge", "--publish", f"127.0.0.1:{port}:8123",
+        "--volume", f"{config}:/config:rw",
+        "--env", "PYTHONDONTWRITEBYTECODE=1", CONTAINER_IMAGE,
+    ]
+
+
+async def stop_owned_container(process, name, *, timeout=40):
+    """Stop the exact container, then reap its attached Docker client."""
+    if process.poll() is not None:
+        return False
+    try:
+        stopped = await asyncio.to_thread(
+            subprocess.run, ["docker", "stop", "--time", str(timeout), name],
+            capture_output=True, text=True, timeout=timeout + 10,
+        )
+        if stopped.returncode != 0:
+            raise RuntimeError(f"docker stop failed for {name}: {stopped.stderr.strip()}")
+        await asyncio.to_thread(process.wait, timeout + 10)
+        return False
+    except (subprocess.TimeoutExpired, RuntimeError):
+        removed = await asyncio.to_thread(
+            subprocess.run, ["docker", "rm", "-f", name],
+            capture_output=True, text=True, timeout=15,
+        )
+        if removed.returncode != 0:
+            raise RuntimeError(f"docker rm -f failed for {name}: {removed.stderr.strip()}")
+        await asyncio.to_thread(process.wait, 15)
+        return True
+
+
+async def main(runtime="local"):
     runs = ROOT / ".installed-verification"
     runs.mkdir(exist_ok=True)
     config = Path(tempfile.mkdtemp(prefix="run-", dir=runs))
@@ -56,6 +93,8 @@ async def main():
         port = sock.getsockname()[1]
     base = f"http://127.0.0.1:{port}"
     shutil.copytree(ROOT / "custom_components/health_bridge", config / "custom_components/health_bridge")
+    server_host = "0.0.0.0" if runtime == "container" else "127.0.0.1"
+    server_port = 8123 if runtime == "container" else port
     (config / "configuration.yaml").write_text(f"""
 homeassistant:
   name: Archive disposable verification
@@ -65,8 +104,8 @@ homeassistant:
   unit_system: metric
   time_zone: UTC
 http:
-  server_host: 127.0.0.1
-  server_port: {port}
+  server_host: {server_host}
+  server_port: {server_port}
 frontend:
 api:
 config:
@@ -78,16 +117,22 @@ recorder:
   auto_purge: false
   purge_keep_days: 1
 """)
-    report = {"config": str(config), "fork_sha": subprocess.check_output(
+    container_name = f"health-bridge-smoke-{secrets.token_hex(6)}" if runtime == "container" else None
+    report = {"config": str(config), "runtime": runtime, "fork_sha": subprocess.check_output(
         ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
         "working_tree_dirty": bool(subprocess.check_output(
             ["git", "status", "--porcelain"], cwd=ROOT, text=True)), "checks": {}}
+    if container_name:
+        report.update({"container_name": container_name, "container_image": CONTAINER_IMAGE})
     print(f"Disposable config: {config}", flush=True)
     process = None
     log = (config / "process.log").open("a")
     access = None
 
     def start():
+        if container_name:
+            return subprocess.Popen(container_command(config, port, container_name),
+                                    cwd=config, stdout=log, stderr=subprocess.STDOUT)
         return subprocess.Popen(
             [sys.executable, "-m", "homeassistant", "--config", str(config), "--skip-pip"],
             cwd=config, env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "PYTHONFAULTHANDLER": "1"},
@@ -96,9 +141,11 @@ recorder:
 
     async def stop():
         if process and process.poll() is None:
-            forced = await stop_owned_process(process)
+            forced = (await stop_owned_container(process, container_name) if container_name
+                      else await stop_owned_process(process))
             report.setdefault("shutdowns", []).append({
-                "pid": process.pid, "forced_kill": forced, "returncode": process.returncode,
+                "pid": process.pid, "exit_code_source": "docker_run" if container_name else "owned_child",
+                "forced_kill": forced, "returncode": process.returncode,
             })
             if forced:
                 print(f"Shutdown timeout: killed and reaped owned HA child {process.pid}", flush=True)
@@ -257,10 +304,17 @@ recorder:
         finally:
             await stop()
             log.close()
+            report["checks"]["clean_shutdowns"] = (
+                len(report.get("shutdowns", [])) == 2
+                and all(item["returncode"] == 0 and not item["forced_kill"]
+                        for item in report["shutdowns"])
+            )
             report["finished_at"] = time.time()
             (config / "verification.json").write_text(json.dumps(report, indent=2) + "\n")
         assert all(item["returncode"] == 0 for item in report.get("shutdowns", [])), report["shutdowns"]
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--runtime", choices=("local", "container"), default="local")
+    asyncio.run(main(parser.parse_args().runtime))

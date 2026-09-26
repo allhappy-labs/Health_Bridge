@@ -142,6 +142,11 @@ async def test_archive_store_outage_keeps_live_and_capability_available(
     def fail_open(cls, path):
         raise sqlite3.OperationalError("private database details")
 
+    # Simulate process startup without an existing store. A working store now
+    # deliberately survives entry reload, including during a backup fence.
+    assert await hass.config_entries.async_unload(bridge_entries[0].entry_id)
+    hass.data["health_bridge"].pop("archive_store")
+    original_open = ArchiveStore.open
     monkeypatch.setattr(ArchiveStore, "open", classmethod(fail_open))
     assert await hass.config_entries.async_reload(bridge_entries[0].entry_id)
     response = await send(archive_client, payload("archive_capability"))
@@ -158,6 +163,13 @@ async def test_archive_store_outage_keeps_live_and_capability_available(
         },
     )
     assert response.status == 200
+    # Failed initial opens remain retryable; process-lifetime ownership must
+    # not permanently cache archive unavailability.
+    monkeypatch.setattr(ArchiveStore, "open", original_open)
+    assert await hass.config_entries.async_reload(bridge_entries[0].entry_id)
+    response = await send(archive_client, payload("archive_capability"))
+    assert (await response.json())["archive_available"] is True
+    assert (await send(archive_client, payload())).status == 200
 
 
 async def test_unbound_entry_status_never_leaks_another_users_projection(bridge_client):
@@ -195,7 +207,7 @@ async def test_durable_ack_and_lost_response_retry_survive_entry_reload(
     previous_store = hass.data["health_bridge"]["archive_store"]
     await hass.config_entries.async_reload(bridge_entries[0].entry_id)
     await hass.async_block_till_done()
-    assert hass.data["health_bridge"]["archive_store"] is not previous_store
+    assert hass.data["health_bridge"]["archive_store"] is previous_store
     retried = await send(archive_client, payload())
     assert retried.status == 200
     assert await retried.json() == receipt

@@ -33,6 +33,20 @@ USER = "person-1"
 SID = "health_bridge:steps_" + hashlib.sha256(USER.encode()).hexdigest()[:32]
 
 
+async def stop_owned_process(process, *, timeout=40):
+    """Reap our child after SIGTERM, escalating only that child on timeout."""
+    if process.poll() is not None:
+        return False
+    process.send_signal(signal.SIGTERM)
+    try:
+        await asyncio.to_thread(process.wait, timeout)
+        return False
+    except subprocess.TimeoutExpired:
+        process.kill()
+        await asyncio.to_thread(process.wait)
+        return True
+
+
 async def main():
     runs = ROOT / ".installed-verification"
     runs.mkdir(exist_ok=True)
@@ -82,8 +96,12 @@ recorder:
 
     async def stop():
         if process and process.poll() is None:
-            process.send_signal(signal.SIGTERM)
-            await asyncio.to_thread(process.wait, 40)
+            forced = await stop_owned_process(process)
+            report.setdefault("shutdowns", []).append({
+                "pid": process.pid, "forced_kill": forced, "returncode": process.returncode,
+            })
+            if forced:
+                print(f"Shutdown timeout: killed and reaped owned HA child {process.pid}", flush=True)
 
     async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as session:
         async def request(method, path, *, auth=True, **kwargs):

@@ -98,6 +98,8 @@ commit acknowledgement. The projection worker retries after backup. A busy or
 failed checkpoint fails the backup; post-backup resumes work even if the backup
 failed. Do not run external SQLite writers against the archive during backup:
 the write fence applies to this integration's store instance.
+The successfully opened store survives HAL entry unload/reload for the lifetime
+of the HA process, so reconfiguring an entry cannot bypass an active backup fence.
 
 For a manual filesystem backup, stop HA and any external archive access first.
 Use SQLite's backup operation or run `PRAGMA wal_checkpoint(TRUNCATE)` and verify

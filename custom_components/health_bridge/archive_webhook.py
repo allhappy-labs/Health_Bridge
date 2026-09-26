@@ -60,6 +60,11 @@ def _open_store(path: str) -> ArchiveStore:
 
 async def async_setup_archive(hass: HomeAssistant) -> None:
     """Open durable storage without making live setup depend on its health."""
+    # The store belongs to the HA process, not the HAL config entry. Replacing
+    # it on reload would discard an active backup fence and let writes resume
+    # while HA is still copying the checkpointed file. Failed opens may retry.
+    if hass.data[DOMAIN].get("archive_store") is not None:
+        return
     try:
         store = await hass.async_add_executor_job(
             _open_store, hass.config.path(".storage", "health_bridge_archive.sqlite")

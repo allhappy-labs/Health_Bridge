@@ -133,6 +133,48 @@ async def test_ha_discovers_backup_hooks_for_loaded_integration(bridge_entries, 
     assert "health_bridge" in hass.data["backup"].platforms
 
 
+async def test_entry_reload_cannot_bypass_backup_fence(
+    bridge_client, bridge_entries, hass, tmp_path
+):
+    backup = importlib.import_module("custom_components.health_bridge.backup")
+    payload = json.loads(Path("docs/protocol/fixtures/archive-batch-v2.json").read_text())
+    payload["token"] = "health-assistant-compatibility-token-00001"
+    response = await bridge_client.post("/api/webhook/health_bridge", json=payload)
+    assert response.status == 200
+    original_store = hass.data["health_bridge"]["archive_store"]
+    await backup.async_pre_backup(hass)
+    try:
+        assert await hass.config_entries.async_reload(bridge_entries[0].entry_id)
+        await hass.async_block_till_done()
+        payload.update(batch_id="during-backup", request_id="during-backup")
+        payload["samples"][0]["uuid"] = "bd085ccc-22f4-4e80-a865-149bb5b0d1d5"
+        response = await bridge_client.post("/api/webhook/health_bridge", json=payload)
+        assert response.status == 503  # Reload must not reopen an unfenced store.
+        assert hass.data["health_bridge"]["archive_store"] is original_store
+        copied = tmp_path / "reload-backup.sqlite"
+        await hass.async_add_executor_job(
+            shutil.copy2, hass.config.path(".storage", "health_bridge_archive.sqlite"), copied
+        )
+        restored = await hass.async_add_executor_job(ArchiveStore.open, copied)
+        assert await hass.async_add_executor_job(
+            restored.sample_detail, "person-1", payload["sample_type"],
+            "bd085ccc-22f4-4e80-a865-149bb5b0d1d4",
+        ) is not None
+        assert await hass.async_add_executor_job(
+            restored.sample_detail, "person-1", payload["sample_type"],
+            "bd085ccc-22f4-4e80-a865-149bb5b0d1d5",
+        ) is None
+    finally:
+        await backup.async_post_backup(hass)
+    response = await bridge_client.post("/api/webhook/health_bridge", json=payload)
+    assert response.status == 200
+    assert (await response.json())["committed_samples"] == 1
+    assert await hass.async_add_executor_job(
+        original_store.sample_detail, "person-1", payload["sample_type"],
+        "bd085ccc-22f4-4e80-a865-149bb5b0d1d5",
+    ) is not None
+
+
 @pytest.mark.parametrize("include_recorder", [False, True])
 async def test_real_ha_backup_engine_includes_archive(hass, seeded, tmp_path, include_recorder):
     from homeassistant.components.backup.manager import CoreBackupReaderWriter

@@ -123,8 +123,12 @@ async def async_handle_archive_request(
         return archive_error("archive_unavailable", 503)
     try:
         if batch.request_type == "archive_status":
-            states = await hass.async_add_executor_job(
-                store.projection_status, batch.user_id
+            states = (
+                await worker.async_projection_status(batch.user_id)
+                if statistics_available
+                else await hass.async_add_executor_job(
+                    store.projection_status, batch.user_id
+                )
             )
             return web.json_response(
                 ArchiveProjectionStatus(
@@ -144,9 +148,9 @@ async def async_handle_archive_request(
             return archive_error("unsupported_sample_type", 422)
         receipt = await hass.async_add_executor_job(store.commit_batch, batch)
         acknowledgement = receipt.as_dict()
-        acknowledgement["projection_state"] = _reported_projection_state(
-            receipt.projection_state, statistics_available
-        )
+        # A receipt proves only archive COMMIT. The status request performs
+        # fresh recorder reconciliation before it may say statistics current.
+        acknowledgement["projection_state"] = "pending"
         return web.json_response(acknowledgement)
     except ArchiveStoreError as exc:
         if exc.code == "batch_conflict":

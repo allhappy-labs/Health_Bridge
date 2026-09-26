@@ -26,17 +26,29 @@ from homeassistant.components.recorder.models import StatisticData, StatisticMea
 from homeassistant.components.recorder.statistics import (
     async_add_external_statistics,
     get_metadata,
+    get_last_statistics,
+    statistic_during_period,
     statistics_during_period,
 )
 from homeassistant.core import HomeAssistant
 
 from .archive_protocol import ArchiveSample, CategoryPayload, QuantityPayload
-from .archive_store import ArchiveQuery, ArchiveStore, ProjectionJob, FULL_REBUILD_HOUR
+from .archive_store import (
+    ArchiveQuery,
+    ArchiveStore,
+    ProjectionJob,
+    FULL_REBUILD_HOUR,
+    RECONCILE_HOUR,
+)
 from .statistic_rules import RULES, TYPE_METRICS, StatisticRule
 
 HOUR = timedelta(hours=1)
 END = datetime.max.replace(tzinfo=timezone.utc)
 CHUNK = 168
+
+
+class StatisticsNeedRebuild(Exception):
+    """Recorder contains a formerly valid hour absent from the archive."""
 
 
 def statistic_id(metric: str, user_id: str) -> str:
@@ -139,7 +151,13 @@ def project_hour(
     # source selection for timestamp ties; different UUIDs remain distinct.
     for instant in sorted({start for _, start, stop in points if start == stop}):
         instant_points = [s for s, start, stop in points if start == stop == instant]
-        source = min(s.source.bundle_id for s in instant_points)
+        # Intervals use half-open coverage at this instant too. Otherwise a
+        # lower-priority point could add on top of a preferred device's total.
+        source = min(
+            s.source.bundle_id
+            for s, start, stop in points
+            if start <= instant < stop or start == stop == instant
+        )
         if rule.mode == "total":
             contributions.extend(
                 s.payload.canonical_value
@@ -265,6 +283,8 @@ class ArchiveProjectionWorker:
         )
 
     async def _read(self, recorder, sid, start, end):
+        if end - start > CHUNK * HOUR:
+            raise ValueError("statistics_window_too_large")
         result = await recorder.async_add_executor_job(
             statistics_during_period,
             self.hass,
@@ -277,6 +297,159 @@ class ArchiveProjectionWorker:
         )
         return result.get(sid, [])
 
+    async def _has_since(self, recorder, sid, start):
+        """An ordered LIMIT 1 query proves tail/all-series existence."""
+        result = await recorder.async_add_executor_job(
+            get_last_statistics, self.hass, 1, sid, False, {"mean", "state", "sum"}
+        )
+        return any(row["start"] >= start.timestamp() for row in result.get(sid, []))
+
+    async def _has_before(self, recorder, sid, end, rule):
+        """One SQL aggregate result detects a restored stale prefix, even zero."""
+        result = await recorder.async_add_executor_job(
+            statistic_during_period,
+            self.hass,
+            None,
+            end,
+            sid,
+            {"change"} if rule.additive else {"mean"},
+            None,
+        )
+        return any(value is not None for value in result.values())
+
+    async def _matches(self, recorder, sid, data, start=None, *, exact=True):
+        """Compare values and exact hour inventory in bounded UTC windows."""
+        start = start if start is not None else data[0]["start"]
+        end = data[-1]["start"] + HOUR
+        while start < end:
+            stop = min(start + CHUNK * HOUR, end)
+            expected = {
+                row["start"].timestamp(): row
+                for row in data
+                if start <= row["start"] < stop
+            }
+            actual = {
+                row["start"]: row
+                for row in await self._read(recorder, sid, start, stop)
+            }
+            if (
+                exact and actual.keys() != expected.keys()
+            ) or not expected.keys() <= actual.keys():
+                return False
+            for timestamp, row in expected.items():
+                if any(
+                    not isinstance(actual[timestamp].get(key), (int, float))
+                    or not math.isclose(
+                        actual[timestamp][key], value, rel_tol=1e-9, abs_tol=1e-9
+                    )
+                    for key, value in row.items()
+                    if key != "start"
+                ):
+                    return False
+            start = stop
+        return True
+
+    async def _metadata_matches(self, recorder, rule, user):
+        metadata = _metadata(rule, user)
+        sid = metadata["statistic_id"]
+        actual = await recorder.async_add_executor_job(
+            partial(get_metadata, self.hass, statistic_ids={sid})
+        )
+        return sid in actual and all(
+            actual[sid][1].get(key) == metadata[key]
+            for key in (
+                "unit_class",
+                "unit_of_measurement",
+                "mean_type",
+                "has_sum",
+                "source",
+            )
+        )
+
+    async def async_projection_status(self, user_id):
+        """Reconcile current claims with recorder before exposing them to users.
+
+        Recorder can be restored/purged independently of the archive. This is a
+        read-only comparison unless a mismatch queues durable replay; archive
+        acknowledgements never wait for this full, bounded-page comparison.
+        """
+        async with self._lock:
+            states = await self.hass.async_add_executor_job(
+                self.store.projection_status, user_id
+            )
+            for sample_type, (state, _) in states.items():
+                if state != "current":
+                    continue
+                rules = [
+                    RULES[metric]
+                    for metric in TYPE_METRICS.get(sample_type, ())
+                    if RULES[metric].mode != "timeline"
+                ]
+                if not rules:
+                    continue
+                try:
+                    matches = await self._series_matches(user_id, sample_type, rules)
+                except StatisticsNeedRebuild:
+                    await self.hass.async_add_executor_job(
+                        self.store.request_full_projection_rebuild,
+                        ProjectionJob(
+                            "reconcile", user_id, sample_type, RECONCILE_HOUR, 0, None
+                        ),
+                    )
+                    continue
+                except Exception:
+                    matches = False
+                if not matches:
+                    await self.hass.async_add_executor_job(
+                        self.store.request_projection_reconciliation,
+                        user_id,
+                        sample_type,
+                    )
+            # Archive corrections can arrive during readback; re-read durable
+            # status so their new jobs cannot be reported as current.
+            return await self.hass.async_add_executor_job(
+                self.store.projection_status, user_id
+            )
+
+    async def _series_matches(self, user_id, sample_type, rules):
+        recorder = get_instance(self.hass)
+        job = ProjectionJob("reconcile", user_id, sample_type, RECONCILE_HOUR, 0, None)
+        series = _series(self.store, job, rules)
+        checked_until = {rule.metric: None for rule in rules}
+        seen = set()
+        while chunk := await self.hass.async_add_executor_job(
+            lambda: list(islice(series, CHUNK))
+        ):
+            for rule in rules:
+                data = [row for candidate, row in chunk if candidate == rule]
+                if not data:
+                    continue
+                sid = statistic_id(rule.metric, user_id)
+                if rule.metric not in seen and await self._has_before(
+                    recorder, sid, data[0]["start"], rule
+                ):
+                    raise StatisticsNeedRebuild
+                if not await self._matches(
+                    recorder, sid, data, checked_until[rule.metric]
+                ):
+                    return False
+                if rule.metric not in seen and not await self._metadata_matches(
+                    recorder, rule, user_id
+                ):
+                    return False
+                seen.add(rule.metric)
+                checked_until[rule.metric] = data[-1]["start"] + HOUR
+        return not any(
+            [
+                await self._has_since(
+                    recorder,
+                    statistic_id(rule.metric, user_id),
+                    checked_until[rule.metric] or RECONCILE_HOUR,
+                )
+                for rule in rules
+            ]
+        )
+
     async def _write_verified(self, recorder, rule, user, data):
         metadata = _metadata(rule, user)
         async_add_external_statistics(self.hass, metadata, data)
@@ -285,44 +458,12 @@ class ArchiveProjectionWorker:
         # async_block_till_done may observe an empty queue while the recorder
         # is executing the dequeued import. Only a matching read is a receipt.
         for attempt in range(20):
-            actual = await self._read(
-                recorder, sid, data[0]["start"], data[-1]["start"] + HOUR
-            )
-            by_start = {r["start"]: r for r in actual}
-            if all(
-                all(
-                    isinstance(
-                        by_start.get(expected["start"].timestamp(), {}).get(k),
-                        (int, float),
-                    )
-                    and math.isclose(
-                        by_start[expected["start"].timestamp()][k],
-                        v,
-                        rel_tol=1e-9,
-                        abs_tol=1e-9,
-                    )
-                    for k, v in expected.items()
-                    if k != "start"
-                )
-                for expected in data
-            ):
+            if await self._matches(recorder, sid, data, exact=False):
                 break
             await asyncio.sleep(0.05)
         else:
             raise RuntimeError("statistics_readback_failed")
-        meta = await recorder.async_add_executor_job(
-            partial(get_metadata, self.hass, statistic_ids={sid})
-        )
-        if sid not in meta or any(
-            meta[sid][1].get(k) != metadata[k]
-            for k in (
-                "unit_class",
-                "unit_of_measurement",
-                "mean_type",
-                "has_sum",
-                "source",
-            )
-        ):
+        if not await self._metadata_matches(recorder, rule, user):
             raise RuntimeError("statistics_metadata_failed")
 
     async def async_rebuild(self, job: ProjectionJob) -> None:
@@ -371,7 +512,8 @@ class ArchiveProjectionWorker:
             return
         recorder = get_instance(self.hass)
         full = job.hour_start == FULL_REBUILD_HOUR
-        coalesce = full or all(r.additive for r in rules)
+        reconcile = job.hour_start == RECONCILE_HOUR
+        coalesce = full or reconcile or all(r.additive for r in rules)
         snapshot = (
             await self.hass.async_add_executor_job(
                 self.store.projection_tail_snapshot, job
@@ -385,12 +527,12 @@ class ArchiveProjectionWorker:
             await recorder.async_block_till_done()
             for sid in ids:
                 for attempt in range(20):
-                    if not await self._read(recorder, sid, FULL_REBUILD_HOUR, END):
+                    if not await self._has_since(recorder, sid, FULL_REBUILD_HOUR):
                         break
                     await asyncio.sleep(0.05)
                 else:
                     raise RuntimeError("statistics_clear_failed")
-        else:
+        elif not reconcile:
             query = ArchiveQuery(
                 job.user_id,
                 job.sample_type,
@@ -430,7 +572,9 @@ class ArchiveProjectionWorker:
             rules = [r for r in rules if r.additive]
         if rules:
             series = _series(self.store, job, rules)
-            checked_until = {r.metric: job.hour_start for r in rules}
+            checked_until = {
+                r.metric: None if full or reconcile else job.hour_start for r in rules
+            }
             while chunk := await self.hass.async_add_executor_job(
                 lambda: list(islice(series, CHUNK))
             ):
@@ -439,26 +583,22 @@ class ArchiveProjectionWorker:
                     if data:
                         await self._write_verified(recorder, rule, job.user_id, data)
                         end = data[-1]["start"] + HOUR
-                        actual = await self._read(
+                        if not await self._matches(
                             recorder,
                             statistic_id(rule.metric, job.user_id),
+                            data,
                             checked_until[rule.metric],
-                            end,
-                        )
-                        if {r["start"] for r in actual} != {
-                            r["start"].timestamp() for r in data
-                        }:
+                        ):
                             await self.hass.async_add_executor_job(
                                 self.store.request_full_projection_rebuild, job
                             )
                             return
                         checked_until[rule.metric] = end
             for rule in rules:
-                if await self._read(
+                if await self._has_since(
                     recorder,
                     statistic_id(rule.metric, job.user_id),
-                    checked_until[rule.metric],
-                    END,
+                    checked_until[rule.metric] or RECONCILE_HOUR,
                 ):
                     await self.hass.async_add_executor_job(
                         self.store.request_full_projection_rebuild, job

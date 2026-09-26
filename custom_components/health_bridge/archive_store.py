@@ -40,6 +40,7 @@ _CLAIM_SECONDS = 300
 # A durable repair intent, outside real HealthKit history. Unlike a flag on an
 # ordinary hour, archive corrections cannot erase it while recorder is cleared.
 FULL_REBUILD_HOUR = datetime.min.replace(tzinfo=timezone.utc)
+RECONCILE_HOUR = FULL_REBUILD_HOUR + _HOUR
 
 
 class ArchiveStoreError(ValueError):
@@ -586,6 +587,16 @@ class ArchiveStore:
                     job.sample_type,
                     _instant(FULL_REBUILD_HOUR),
                 ),
+            )
+
+    def request_projection_reconciliation(self, user_id: str, sample_type: str) -> None:
+        """Durably replay missing statistics without clearing existing hours."""
+        with self._connection() as db:
+            db.execute(
+                """INSERT OR IGNORE INTO projection_jobs
+                (job_id, user_id, sample_type, hour_start, state)
+                VALUES (?, ?, ?, ?, 'pending')""",
+                (str(uuid4()), user_id, sample_type, _instant(RECONCILE_HOUR)),
             )
 
     def projection_tail_snapshot(self, job: ProjectionJob) -> tuple[str, ...]:

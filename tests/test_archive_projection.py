@@ -98,6 +98,19 @@ def test_source_aware_prorated_totals_do_not_double_count_devices(api, rules):
     assert api.project_hour(list(reversed(points)), rules["steps"], HOUR)["state"] == 90
 
 
+def test_instant_source_priority_includes_overlapping_intervals(api, rules):
+    points = [
+        sample(120, end=HOUR + timedelta(hours=1)),
+        sample(999, start=HOUR + timedelta(minutes=30), source="b.phone", uuid="phone"),
+        sample(5, start=HOUR + timedelta(minutes=30), uuid="same-source"),
+    ]
+    assert api.project_hour(points[:2], rules["steps"], HOUR)["state"] == 120
+    assert api.project_hour(points, rules["steps"], HOUR)["state"] == 125
+    # A preferred interval ending at the instant no longer covers that point.
+    points[0] = sample(120, end=HOUR + timedelta(minutes=30))
+    assert api.project_hour(points[:2], rules["steps"], HOUR)["state"] == 1119
+
+
 @pytest.mark.parametrize(
     "start", ["2024-03-31T00:30:00+00:00", "2024-10-27T00:30:00+00:00"]
 )
@@ -611,3 +624,200 @@ async def test_missing_statistics_api_keeps_health_entry_available(
     assert await hass.config_entries.async_setup(entry.entry_id)
     assert hass.data["health_bridge"]["archive_store"] is not None
     assert "archive_projection_worker" not in hass.data["health_bridge"]
+
+
+async def test_all_statistics_reads_are_bounded_including_empty_hour_repair(
+    recorder_mock, api, hass, store, monkeypatch
+):
+    original = api.statistics_during_period
+    ranges = []
+
+    def bounded(hass, start, end, *args):
+        ranges.append((start, end))
+        assert end - start <= timedelta(hours=168), "Unbounded statistics read"
+        return original(hass, start, end, *args)
+
+    monkeypatch.setattr(api, "statistics_during_period", bounded)
+    data = payload()
+    early = deepcopy(data["samples"][0])
+    early.update(
+        uuid="bd085ccc-22f4-4e80-a865-149bb5b0d1d5",
+        start="2020-01-01T10:00:00Z",
+        end="2020-01-01T10:00:01Z",
+    )
+    data["samples"].append(early)
+    await commit(hass, store, data)
+    worker = api.ArchiveProjectionWorker(hass, store)
+    await drain(hass, store, worker)
+    assert (await hass.async_add_executor_job(store.projection_status, "person-1"))[
+        STEP
+    ] == ("current", None)
+    data["deletions"] = [early["uuid"]]
+    data["samples"] = []
+    await commit(hass, store, data, "delete-oldest")
+    await drain(hass, store, worker)
+    assert (await hass.async_add_executor_job(store.projection_status, "person-1"))[
+        STEP
+    ] == ("current", None)
+    assert ranges and all(end - start <= timedelta(hours=168) for start, end in ranges)
+    assert [
+        (r["state"], r["sum"])
+        for r in await rows(hass, recorder_mock, api.statistic_id("steps", "person-1"))
+    ] == [(12, 12)]
+
+
+async def test_status_reconciles_disappeared_statistics_before_current(
+    recorder_mock, api, hass, store
+):
+    from custom_components.health_bridge.archive_webhook import (
+        async_handle_archive_request,
+    )
+
+    worker = api.ArchiveProjectionWorker(hass, store)
+    hass.data["health_bridge"] = {"archive_projection_worker": worker}
+    data = payload(HEART)
+    await commit(hass, store, data)
+    await drain(hass, store, worker)
+    request = {
+        "request_type": "archive_status",
+        "protocol_version": 2,
+        "request_id": "status",
+        "user_id": "person-1",
+    }
+    response = await async_handle_archive_request(hass, request, store)
+    assert json.loads(response.body)["metrics"][0]["state"] == "current"
+    sid = api.statistic_id("heart_rate", "person-1")
+    recorder_mock.async_clear_statistics([sid])
+    await recorder_mock.async_block_till_done()
+    # A no-op archive receipt is not proof that recorder still has its rows.
+    no_op = deepcopy(data)
+    no_op.update(batch_id="no-op-after-clear", request_id="no-op-after-clear")
+    receipt = await async_handle_archive_request(hass, no_op, store)
+    assert json.loads(receipt.body)["projection_state"] == "pending"
+    response = await async_handle_archive_request(hass, request, store)
+    assert json.loads(response.body)["metrics"][0]["state"] == "pending"
+    await drain(hass, store, api.ArchiveProjectionWorker(hass, store))
+    response = await async_handle_archive_request(hass, request, store)
+    assert json.loads(response.body)["metrics"][0]["state"] == "current"
+    assert (await rows(hass, recorder_mock, sid))[0]["mean"] == 12
+
+
+async def test_interior_deleted_hour_is_repaired_after_sparse_tail_upsert(
+    recorder_mock, api, hass, store
+):
+    data = payload()
+    template = data["samples"][0]
+    points = []
+    for index in range(3):
+        point = deepcopy(template)
+        point.update(
+            uuid=f"bd085ccc-22f4-4e80-a865-{index:012x}",
+            start=f"2024-01-01T{10 + index}:00:00Z",
+            end=f"2024-01-01T{10 + index}:00:01Z",
+        )
+        points.append(point)
+    data["samples"] = points
+    await commit(hass, store, data)
+    worker = api.ArchiveProjectionWorker(hass, store)
+    await drain(hass, store, worker)
+    data["samples"] = points[:1]
+    data["samples"][0]["payload"].update(raw_value=3, canonical_value=3)
+    data["deletions"] = [points[1]["uuid"]]
+    await commit(hass, store, data, "delete-middle")
+    await drain(hass, store, worker)
+    assert (await hass.async_add_executor_job(store.projection_status, "person-1"))[
+        STEP
+    ] == ("current", None)
+    assert [
+        (r["state"], r["sum"])
+        for r in await rows(hass, recorder_mock, api.statistic_id("steps", "person-1"))
+    ] == [(3, 3), (12, 15)]
+
+
+async def test_partial_recorder_loss_is_reconciled_without_clearing_survivors(
+    recorder_mock, api, hass, store, monkeypatch
+):
+    from homeassistant.components.recorder.db_schema import Statistics
+
+    data = payload(HEART)
+    later = deepcopy(data["samples"][0])
+    later.update(
+        uuid="bd085ccc-22f4-4e80-a865-149bb5b0d1d5",
+        start="2024-01-01T11:00:00Z",
+        end="2024-01-01T11:00:01Z",
+    )
+    data["samples"].append(later)
+    await commit(hass, store, data)
+    worker = api.ArchiveProjectionWorker(hass, store)
+    await drain(hass, store, worker)
+    sid = api.statistic_id("heart_rate", "person-1")
+    meta = await recorder_mock.async_add_executor_job(
+        lambda: get_metadata(hass, statistic_ids={sid})
+    )
+
+    def simulate_partial_restore():
+        with recorder_mock.get_session() as session:
+            session.query(Statistics).filter(
+                Statistics.metadata_id == meta[sid][0],
+                Statistics.start_ts == HOUR.timestamp(),
+            ).delete()
+            session.commit()
+
+    await recorder_mock.async_add_executor_job(simulate_partial_restore)
+    assert len(await rows(hass, recorder_mock, sid)) == 1
+    assert (await worker.async_projection_status("person-1"))[HEART][0] == "pending"
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Missing rows require replay, not a series clear")
+
+    monkeypatch.setattr(recorder_mock, "async_clear_statistics", forbidden)
+    await drain(hass, store, api.ArchiveProjectionWorker(hass, store))
+    assert (await worker.async_projection_status("person-1"))[HEART] == (
+        "current",
+        None,
+    )
+    assert [r["mean"] for r in await rows(hass, recorder_mock, sid)] == [12, 12]
+
+
+@pytest.mark.parametrize(
+    "sample_type,metric,stale",
+    [
+        (HEART, "heart_rate", {"mean": 7, "min": 7, "max": 7}),
+        (STEP, "steps", {"state": 0, "sum": 0}),
+    ],
+)
+async def test_restored_stale_prefix_is_removed_before_current(
+    recorder_mock, api, hass, store, sample_type, metric, stale
+):
+    data = payload(sample_type)
+    await commit(hass, store, data)
+    worker = api.ArchiveProjectionWorker(hass, store)
+    await drain(hass, store, worker)
+    sid = api.statistic_id(metric, "person-1")
+    meta = await recorder_mock.async_add_executor_job(
+        lambda: get_metadata(hass, statistic_ids={sid})
+    )
+    old_hour = HOUR.replace(year=2020)
+    api.async_add_external_statistics(
+        hass, meta[sid][1], [{"start": old_hour, **stale}]
+    )
+    await recorder_mock.async_block_till_done()
+    assert (await worker.async_projection_status("person-1"))[sample_type][
+        0
+    ] == "pending"
+    await drain(hass, store, worker)
+    assert (await worker.async_projection_status("person-1"))[sample_type] == (
+        "current",
+        None,
+    )
+    old_rows = await recorder_mock.async_add_executor_job(
+        statistics_during_period,
+        hass,
+        old_hour,
+        old_hour + timedelta(hours=1),
+        {sid},
+        "hour",
+        None,
+        {"mean"},
+    )
+    assert not old_rows.get(sid)

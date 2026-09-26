@@ -527,10 +527,12 @@ class ArchiveStore:
         _executor_only()
         with self._connection() as db:
             db.execute("BEGIN IMMEDIATE")
-            db.execute(
+            result = db.execute(
                 "DELETE FROM archive_owner_claims WHERE user_id=? AND claim_id=?",
                 (user_id, claim_id),
             )
+            if result.rowcount != 1:
+                raise ArchiveStoreError("claim_not_found")
 
     def commit_batch(
         self, batch: ArchiveBatch, uploader_secret: str,

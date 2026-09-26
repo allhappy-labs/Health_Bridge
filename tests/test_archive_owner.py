@@ -232,6 +232,13 @@ def test_reject_pending_claim_keeps_active_owner(store):
     assert store.assert_owner("person-1", SECRET_A) == 1
 
 
+def test_reject_stale_claim_id_does_not_report_success_or_drop_current_claim(store):
+    pending = store.claim_owner("person-1", SECRET_A, NOW)
+    with pytest.raises(ArchiveStoreError, match="claim_not_found"):
+        store.reject_owner("person-1", "stale-claim-id")
+    assert store.pending_owner_claim("person-1", NOW) == pending
+
+
 def test_backup_copy_preserves_owner_digest_and_generation(store, tmp_path):
     approve(store, SECRET_A)
     store.commit_batch(batch(), SECRET_A)

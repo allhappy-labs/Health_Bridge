@@ -391,8 +391,8 @@ recorder:
             page = await webhook(inventory)
             assert page["sample_ids"] == [] and page["owner_generation"] == 2, page
             deletion = {**fixture, "uploader_credential": PHONE_B,
-                        "request_id": "delete-old-a", "batch_id": "delete-old-a",
-                        "samples": [], "deletions": [SAMPLE_A]}
+                        "request_id": "delete-old-b", "batch_id": "delete-old-b",
+                        "samples": [], "deletions": [SAMPLE_B]}
             await webhook(deletion)
             await raw({SAMPLE_A: 12, SAMPLE_B: 5})
             await statistics(17)
@@ -406,7 +406,7 @@ recorder:
             current_page = await webhook({**inventory, "request_id": "inventory-current"})
             assert current_page["sample_ids"] == [SAMPLE_A], current_page
             final_delete = {**deletion, "request_id": "delete-current-a",
-                            "batch_id": "delete-current-a"}
+                            "batch_id": "delete-current-a", "deletions": [SAMPLE_A]}
             delete_ack = await webhook(final_delete)
             assert delete_ack["committed_deletions"] == 1
             assert await webhook(final_delete) == delete_ack

@@ -25,7 +25,7 @@ The archive persists in `<HA config>/.storage/health_bridge_archive.sqlite` and 
 
 ## Development
 
-The integration has Python tests, Ruff checks, Node card tests and a disposable installed-Home-Assistant smoke test. See [archive operations](docs/archive-operations.md#local-verification) for the exact commands and their limits. The wire contract and fixtures are in [archive-v2](docs/protocol/archive-v2.md). Do not point diagnostic purge or smoke tests at a real Home Assistant configuration.
+The integration has Python tests, Ruff checks, Node card tests and a disposable installed-Home-Assistant smoke test. See [archive operations](docs/archive-operations.md#reproduce-qualification) for the exact commands and their limits. The wire contract and fixtures are in [archive-v2](docs/protocol/archive-v2.md). Do not point diagnostic purge or smoke tests at a real Home Assistant configuration.
 
 ## License and attribution
 

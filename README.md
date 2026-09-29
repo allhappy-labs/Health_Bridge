@@ -1,162 +1,32 @@
-# Health Bridge
+# Health Bridge archive fork
 
-> **Archive fork prerelease `2.1.1a1`.** This checkout adds durable original
-> HealthKit samples, long-term numeric statistics, and an administrator archive
-> browser while preserving upstream v2.1.0 HAL/PAL and v1 compatibility.
-> Requires **Home Assistant 2026.9.3+ / Python 3.14.2+**. The v2 catalog covers
-> 107 direct metrics; the legacy live registry still has all 111 keys.
-> Read [installation, upgrade, backup, restore, export and deletion](docs/archive-operations.md).
-> Public fork/HACS publication is pending; upstream links below describe the
-> original project and do not install this archive feature. A v2-capable client
-> is required. Installed iOS full-history qualification remains separate.
+This is an independent [Health Bridge](https://github.com/gregt1993/Health_Bridge) fork based on upstream v2.1.0. It preserves the existing Health Assistant Link (Apple Health) and Phone Assistant Link (Screen Time) entries and protocol-1 live/backfill behavior, and adds protocol-2 durable HealthKit original-sample archiving for the companion [HA Health Sync iOS app](https://github.com/allhappy-labs/HAHealthSync). It is not maintained by the upstream author or affiliated with the upstream iOS apps.
 
-<p align="center">
-  <img src="https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/8c/0a/b3/8c0ab330-3e85-27b2-8532-e1f912c29fb6/AppIcon-0-0-1x_U007ephone-0-1-85-220.png/460x0w.webp" alt="Health Assistant Link Icon" width="120"/>
-  <img src="https://is1-ssl.mzstatic.com/image/thumb/PurpleSource221/v4/77/b8/20/77b82043-ced8-8c60-fc24-a92c09aa53a6/Placeholder.mill/1024x1024bb.png" alt="Phone Assistant Link Icon" width="120"/>
-</p>
+The archive stores authorized original quantity, category and workout samples separately from Home Assistant's recorder, including sample IDs, time ranges and provenance. Numeric metrics can also project hourly long-term statistics. The fork advertises 107 direct archive metrics from 99 HealthKit types; actual availability depends on the iPhone and Health permissions. Protocol-1 import remains limited to the latest 14 days and does **not** become a durable original-sample archive.
 
-<p align="center">
-  🌐 <a href="https://healthassistantlink.com"><b>healthassistantlink.com</b></a>
-  &nbsp;•&nbsp;
-  📱 <a href="https://apps.apple.com/us/app/health-assistant-link/id6745420767">App Store</a>
-  &nbsp;•&nbsp;
-  📚 <a href="https://healthassistantlink.com/stories">User Stories</a>
-</p>
+## Requirements and status
 
-> [!TIP]
-> ### 🆕 Meet **Phone Assistant Link** — Screen Time and App Blocking, now in Home Assistant
-> A brand-new companion app that brings **Apple Screen Time** into your smart home. Block apps and app groups, set daily usage limits, and apply temporary allow/block overrides — all from Home Assistant, with usage and more surfaced as sensors.
->
-> ✨ Uses the **same Health Bridge integration** — just pick **Phone Assistant Link** during setup.
-> 📱 _App Store — [Download Now](https://apps.apple.com/nz/app/phone-assistant-link/id6806541422)._
+- Home Assistant Core **2026.9.3 or newer** with Python **3.14.2 or newer**. Those are the qualified minimums, not a guarantee of compatibility with every newer release.
+- The [HA Health Sync iOS app](https://github.com/allhappy-labs/HAHealthSync) on iOS 27 for full-history import. Upstream companion apps are not claimed to implement protocol 2.
+- This `2.1.1a1` fork is a source prerelease. Disposable Home Assistant Core tests passed, but a physical iOS 27 import and target Home Assistant backup/restore are not yet verified. Do not rely on it as the only copy of health history.
 
-**Health Bridge** is a custom integration for [Home Assistant](https://www.home-assistant.io/) that connects with the companion iOS apps **[Health Assistant Link](https://apps.apple.com/us/app/health-assistant-link/id6745420767)** (Apple Health → Home Assistant) and the new **Phone Assistant Link** (Apple Screen Time → Home Assistant) to bring your iPhone data into your smart home.
+## Install or upgrade
 
-> 🆓 **Free to use.** Health Assistant Link is free to download and use to sync your Apple Health data into Home Assistant. An optional paid upgrade unlocks **automated syncing**, so your data keeps updating in the background without manual taps.
+1. Make and download a Home Assistant backup. Record the existing Health Bridge version, and test restore on a disposable instance before a large import.
+2. Stop Home Assistant. Save the current `custom_components/health_bridge` directory as a rollback copy, then install the **complete** directory from this repository at `<HA config>/custom_components/health_bridge`. Do not overlay a few files or recreate existing config entries or tokens.
+3. Start Home Assistant. Confirm existing Health Assistant Link and Phone Assistant Link entries still load and their live routes work. In HA Health Sync, Historical Import → Compatibility should report **Archive protocol 2 available**.
+4. Add the `custom:health-bridge-archive` dashboard card as an administrator. From the intended authoritative iPhone, request archive approval; compare the short fingerprint on the phone and card before approving. Import a small, explicitly selected range first.
 
----
+The [operations guide](docs/archive-operations.md) covers upgrade checks, backup/restore, storage, export, deletion and rollback. Only one `health_bridge` integration can be installed. **Do not use the upstream HACS repository to install this archive feature** or let an upstream HACS update overwrite this directory. HACS distribution from this fork has not yet been validated; manual installation is the supported prerelease path.
 
-## 💡 Recommendations
+## Data and privacy
 
-For the most reliable syncing:
+The archive persists in `<HA config>/.storage/health_bridge_archive.sqlite` and is not purged with ordinary recorder history. Home Assistant administrators and configuration backups can access it. Revoking iPhone Health permissions or uninstalling the app does not delete archived data. Archive deletion is a separate administrator action; recorder statistics and backups require their own retention/deletion handling. Protect server access, backups and exports. One admin-approved iPhone is authoritative per Health Bridge user; transferring ownership revokes the old phone's archive writes but preserves its old-only originals.
 
-- Keep **both** the **Health Assistant Link** iPhone app **and** the **Apple Watch app** open in the background.
-- Use **Shortcuts** to schedule automatic syncs at **8:00 AM**, **4:00 PM**, and **12:00 AM**.
-- Aim to open the app at least once per day (this can be easily done as part of a "sleep mode" shortcut).
-- Add one of the lock screen widgets 
+## Development
 
-This setup creates optimal conditions for consistent, regular syncing of your Apple Health data to Home Assistant.
+The integration has Python tests, Ruff checks, Node card tests and a disposable installed-Home-Assistant smoke test. See [archive operations](docs/archive-operations.md#local-verification) for the exact commands and their limits. The wire contract and fixtures are in [archive-v2](docs/protocol/archive-v2.md). Do not point diagnostic purge or smoke tests at a real Home Assistant configuration.
 
-> 💡 Want ideas? See how others use their data in our [User Stories](https://healthassistantlink.com/stories).
+## License and attribution
 
----
-
-## 🚀 Installation
-
-
-### 1. Install Health Assistant Link (iOS App)
-You’ll need the companion iOS app installed on your iPhone:  
-👉 [Download Health Assistant Link on the App Store](https://apps.apple.com/us/app/health-assistant-link/id6745420767)
-
-The app is **free to use**. Automated syncing is available as an optional paid upgrade.
-
-### 2. Install this archive fork
-
-Follow the [fork installation guide](docs/archive-operations.md#install-and-upgrade-from-v210)
-to install the reviewed `custom_components/health_bridge` directory while Home
-Assistant is stopped. Existing upstream entries and tokens are retained.
-HACS installation of this fork is pending publication to a verified fork URL.
-The upstream HACS repository contains upstream Health Bridge without this
-archive implementation.
-
----
-
-## ⚙️ Setup
-
-### Home Assistant Setup
-The steps and screenshots below describe upstream's HACS setup. For this
-archive prerelease, install using the fork guide above, then use step 5 only
-when creating a new HAL or PAL entry; do not recreate existing entries.
-
-1. Install the **Health Bridge** integration from HACS.  
-   <img width="600" alt="image" src="https://github.com/user-attachments/assets/33c515ff-9a2f-4318-86e8-6226b8699a39" />
-
-2. Add the repository in HACS.  
-   <img width="600" alt="image" src="https://github.com/user-attachments/assets/f44d9f65-05b1-48c7-ac29-0a1b1356fed6" />
-
-3. Download the integration.  
-   <img width="600" alt="image" src="https://github.com/user-attachments/assets/d9382fec-2673-4b3a-921f-d625fa5770ae" />
-
-4. Restart Home Assistant.  
-   <img width="600" alt="image" src="https://github.com/user-attachments/assets/582cf776-f3d2-479c-9e28-c76317be4c65" />
-
-5. In the **Integrations** menu, click **Add Entry**, select if you're setting up Health Assistant Link or Phone Assistant Link, enter a secret token, and submit.
-
----
-
-### iOS App Setup
-1. Open the **Health Assistant Link** app.  
-   👉 [Download here](https://apps.apple.com/us/app/health-assistant-link/id6745420767) if not already installed.  
-<img width="250" alt="Screenshot iPhone 17 Pro 02-09-2026 at 9 24 29 PM" src="https://github.com/user-attachments/assets/29aeddc6-b7a9-498a-8199-30998689d1e6" />
-
-
-2. Accept all required permissions.  
-   <img width="250" alt="Screenshot iPhone 17 Pro 02-09-2026 at 9 24 34 PM" src="https://github.com/user-attachments/assets/08d9d91b-ce51-4fa8-a650-953bccf4b163" />
-   <img width="250" alt="IMG_5529" src="https://github.com/user-attachments/assets/14880e0a-cb44-4850-8f76-bfa2f7e68a28" />
-
-3. Enter your **Home Assistant external URL**, your name, and the secret token you created earlier.   
-   <img width="250" alt="Screenshot iPhone 17 Pro 02-09-2026 at 9 25 03 PM" src="https://github.com/user-attachments/assets/99495bfb-1ec9-4c30-a44b-eb5a9644d409" />
-
-
-4. Test the connection to confirm the URL is correct.
-   
-   <img width="250" alt="Screenshot iPhone 17 Pro 02-09-2026 at 9 25 08 PM" src="https://github.com/user-attachments/assets/e3aa1b17-c40b-4b96-99a4-0f8a544fd060" />
-
-6. **(Optional) Upgrade for automated syncing.** The app is free to use with manual syncing. If you’d like your data to sync automatically in the background, subscribe to the optional automated syncing upgrade.  
-   <img width="250" alt="Screenshot iPhone 17 Pro 02-09-2026 at 9 25 18 PM" src="https://github.com/user-attachments/assets/0e961ba1-320b-498d-950e-a49057268870" />
-   
-7. Tap **Sync Now** to start syncing. Leaving the app open in the background improves reliability.    
-   
-   <img width="250" alt="Screenshot iPhone 17 Pro 02-09-2026 at 9 27 27 PM" src="https://github.com/user-attachments/assets/b1d6c500-9de5-4a70-a5a8-541c9ea94c03" />
-
-
-
----
-
-## 📱 Phone Assistant Link (Screen Time)
-
-**Phone Assistant Link** is a separate companion app that uses the **same Health Bridge integration** to bring **Apple Screen Time** controls into Home Assistant. Instead of health data, it exposes app-restriction and usage entities you can automate.
-
-**What you can do from Home Assistant:**
-- 🔒 **Block apps & app groups** — flip a switch to shield selected apps.
-- ⏳ **Daily usage limits** — set a per-group allowance; the app auto-blocks when it's reached.
-- ⏱️ **Temporary overrides** — apply a timed allow/block that expires on its own.
-- 📊 **Usage sensors** — approximate, privacy-preserving screen-time minutes per app/group.
-- 🚫 **Blocked-opens sensors** — an approximate daily count of how often a blocked app was opened (resets daily).
-
-**Setup:** identical to the steps above — install Health Bridge via HACS, add an entry and choose **Phone Assistant Link** in step 5, then enter your Home Assistant URL and secret token in the app.
-
-> ℹ️ **Privacy note:** Screen Time metrics are approximate by design. Apple's on-device APIs keep app identities private and don't expose exact open counts, so usage minutes and blocked-opens are best read as trends rather than precise figures.
-
-📱 _Phone Assistant Link — App Store coming soon._
-
----
-
-## 🆘 Support
-
-- 🌐 [Website: healthassistantlink.com](https://healthassistantlink.com)  
-- 📱 [Health Assistant Link App](https://apps.apple.com/us/app/health-assistant-link/id6745420767)  
-- 🛠 [HACS Integration: Health Bridge](https://my.home-assistant.io/redirect/hacs_repository/?category=integration&repository=health_bridge&owner=gregt1993)  
-- 📚 [User Stories & guides](https://healthassistantlink.com/stories)  
-- 💬 Join the Home Assistant community for troubleshooting and discussion.
-
----
-
-## Community Projects
-
-- 📊 Check out this Dashboard card by BrainDeLook: https://github.com/BrainDeLook/health-bridge-dashboard-card
-
----
-
-## 📄 License
-This project is licensed under the MIT License.
+MIT licensed; see [LICENSE](LICENSE). Based on [gregt1993/Health_Bridge](https://github.com/gregt1993/Health_Bridge) v2.1.0, retaining its upstream history and copyright attribution. The archive implementation and this fork's documentation are by Oleh Vdovenko and contributors. The upstream integration and its two companion apps remain separate projects.

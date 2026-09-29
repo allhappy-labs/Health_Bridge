@@ -48,20 +48,15 @@ claimed to support it. Full-history iOS qualification remains a separate gate.
 See [protocol requests](protocol/archive-v2.md), [archive card](archive-browser.md),
 and [statistic semantics](archive-statistics.md).
 
-### HACS publication dependency
+### HACS prerelease boundary
 
-The repository has the standard HACS integration layout and metadata. At this
-stage the only verified remote is the original upstream repository, which does
-**not** contain this archive fork. No public fork URL or release has been
-verified. Do not use the upstream HACS button to install archive support.
-For now use the manual installation above from the reviewed local checkout.
-
-Before public HACS distribution, the owner must publish the reviewed commit to
-the chosen fork repository, replace the manifest's upstream documentation and
-issue links with verified fork links, tag the prerelease, and validate HACS
-download/install from that remote. Then add that verified URL in HACS → Custom
-repositories → Integration. Do not let the upstream HACS entry overwrite the
-fork during updates. This task does not create or publish a remote.
+The repository has a standard HACS integration layout, but a HACS download and
+installation from the fork's GitHub URL has **not yet been validated**. Use the
+manual installation above for this prerelease. The original upstream HACS
+repository does **not** contain the archive feature; do not let its updates
+overwrite the fork. A future HACS release requires a verified public tag,
+custom-repository install test, and upgrade/rollback check on a disposable
+Home Assistant instance before it is documented as supported.
 
 ## Storage, growth, and retention
 

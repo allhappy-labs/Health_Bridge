@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import secrets
+from datetime import datetime, timezone
 
 import voluptuous as vol
 
@@ -13,6 +14,7 @@ from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import device_registry as dr
 
 from . import async_delete_device_for_entry
+from .archive_store import ArchiveStoreError
 from .const import DOMAIN
 
 CONF_DEVICE_ID = "device_id"
@@ -175,11 +177,121 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
     def __init__(self) -> None:
         self._selected_device_id: str | None = None
+        self._approval_user_id: str | None = None
+        self._approval_claim_id: str | None = None
 
     async def async_step_init(self, user_input: dict | None = None) -> FlowResult:
+        menu_options = ["units", "edit_delete"]
+        if self.config_entry.data.get(CONF_APP_TYPE) == APP_TYPE_HEALTH_ASSISTANT_LINK:
+            menu_options.append("archive_approvals")
         return self.async_show_menu(
             step_id="init",
-            menu_options=["units", "edit_delete"],
+            menu_options=menu_options,
+        )
+
+    async def async_step_archive_approvals(
+        self, user_input: dict | None = None
+    ) -> FlowResult:
+        """Let an administrator select one pending Health Bridge phone claim."""
+        if self.config_entry.data.get(CONF_APP_TYPE) != APP_TYPE_HEALTH_ASSISTANT_LINK:
+            return self.async_abort(reason="archive_unavailable")
+        store = self.hass.data.get(DOMAIN, {}).get("archive_store")
+        if store is None:
+            return self.async_abort(reason="archive_unavailable")
+        claims = await self.hass.async_add_executor_job(
+            store.list_pending_owner_claims, datetime.now(timezone.utc)
+        )
+        if not claims:
+            return self.async_abort(reason="no_pending_archive_claims")
+        if user_input is not None:
+            selected = next(
+                (item for item in claims if item.claim.claim_id == user_input["claim_id"]),
+                None,
+            )
+            if selected is None:
+                return self.async_abort(reason="claim_not_found")
+            self._approval_user_id = selected.user_id
+            self._approval_claim_id = selected.claim.claim_id
+            return await self.async_step_archive_approval_confirm()
+        return self.async_show_form(
+            step_id="archive_approvals",
+            data_schema=vol.Schema(
+                {
+                    vol.Required("claim_id"): vol.In(
+                        {
+                            item.claim.claim_id: (
+                                f"{item.user_id} — {item.claim.fingerprint}"
+                            )
+                            for item in claims
+                        }
+                    )
+                }
+            ),
+        )
+
+    async def async_step_archive_approval_confirm(
+        self, user_input: dict | None = None
+    ) -> FlowResult:
+        """Require the matching iPhone fingerprint before changing ownership."""
+        if self.config_entry.data.get(CONF_APP_TYPE) != APP_TYPE_HEALTH_ASSISTANT_LINK:
+            return self.async_abort(reason="archive_unavailable")
+        store = self.hass.data.get(DOMAIN, {}).get("archive_store")
+        if store is None or self._approval_user_id is None or self._approval_claim_id is None:
+            return self.async_abort(reason="archive_unavailable")
+        now = datetime.now(timezone.utc)
+        claim = await self.hass.async_add_executor_job(
+            store.pending_owner_claim, self._approval_user_id, now
+        )
+        if claim is None or claim.claim_id != self._approval_claim_id:
+            return self.async_abort(reason="claim_not_found")
+        state = await self.hass.async_add_executor_job(
+            store.owner_status, self._approval_user_id, None, now
+        )
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            if user_input["fingerprint"].strip().lower() != claim.fingerprint:
+                errors["fingerprint"] = "fingerprint_mismatch"
+            else:
+                try:
+                    if user_input["action"] == "approve":
+                        await self.hass.async_add_executor_job(
+                            store.approve_owner, self._approval_user_id,
+                            self._approval_claim_id, datetime.now(timezone.utc),
+                        )
+                    else:
+                        await self.hass.async_add_executor_job(
+                            store.reject_owner, self._approval_user_id,
+                            self._approval_claim_id,
+                        )
+                except ArchiveStoreError as exc:
+                    if exc.code != "claim_not_found":
+                        raise
+                    return self.async_abort(reason="claim_not_found")
+                else:
+                    return self.async_create_entry(
+                        title="", data=dict(self.config_entry.options)
+                    )
+        return self.async_show_form(
+            step_id="archive_approval_confirm",
+            data_schema=vol.Schema(
+                {
+                    vol.Required("fingerprint"): str,
+                    vol.Required("action"): vol.In(
+                        {"approve": "Approve uploader", "reject": "Reject claim"}
+                    ),
+                }
+            ),
+            description_placeholders={
+                "user_id": self._approval_user_id,
+                "fingerprint": claim.fingerprint,
+                "transfer_warning": (
+                    "This replaces the approved phone immediately. Old-phone-only originals "
+                    "remain archived; back up Home Assistant before transferring."
+                    if state.generation > 0 else
+                    "This is the first approved archive uploader for this user."
+                ),
+            },
+            errors=errors,
         )
 
     async def async_step_units(self, user_input: dict | None = None) -> FlowResult:

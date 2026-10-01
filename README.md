@@ -8,7 +8,7 @@ The archive stores authorized original quantity, category and workout samples se
 
 - Home Assistant Core **2026.9.3 or newer** with Python **3.14.2 or newer**. Those are the qualified minimums, not a guarantee of compatibility with every newer release.
 - The [HA Health Sync iOS app](https://github.com/allhappy-labs/HAHealthSync) on iOS 27 for full-history import. Upstream companion apps are not claimed to implement protocol 2.
-- This `2.1.1a1` fork is a source prerelease. Disposable Home Assistant Core tests passed, but a physical iOS 27 import and target Home Assistant backup/restore are not yet verified. Do not rely on it as the only copy of health history.
+- This `2.1.1a2` fork is a source prerelease. Disposable Home Assistant Core tests passed, but a physical iOS 27 import and target Home Assistant backup/restore are not yet verified. Do not rely on it as the only copy of health history.
 
 ## Install or upgrade
 
@@ -16,7 +16,7 @@ The archive stores authorized original quantity, category and workout samples se
 2. In HACS → ⋮ → **Custom repositories**, add `https://github.com/allhappy-labs/Health_Bridge` as an **Integration**.
 3. If HACS already downloaded `gregt1993/Health_Bridge`, remove that downloaded package first. HACS may warn that Health Bridge is configured: choose **Ignore** to keep the existing Home Assistant configuration entry; do **not** navigate to delete it. Remove the upstream custom-repository registration too, if present, so HACS tracks only this fork.
 4. Open the `allhappy-labs` Health Bridge entry in HACS and choose **Download**. Check the displayed commit before confirming. Restart Home Assistant; do not add a second Health Bridge configuration entry or replace existing tokens.
-5. Confirm the installed integration is version `2.1.1a1`, its documentation points to `allhappy-labs`, and existing entries and entities load. In HA Health Sync, Historical Import → Compatibility should report **Archive protocol 2 available**. Add the `custom:health-bridge-archive` dashboard card as an administrator, compare the phone's pending approval fingerprint, and import a small range first.
+5. Confirm the installed integration is version `2.1.1a2`, its documentation points to `allhappy-labs`, and existing entries and entities load. In HA Health Sync, Historical Import → Compatibility should report **Archive protocol 2 available**. Request archive approval on the intended iPhone, then open Home Assistant **Settings → Devices & services → Health Bridge → Configure → Archive uploader approvals**. Select the pending phone, compare and type the fingerprint shown on the iPhone, and approve it. Import a small range first. The `custom:health-bridge-archive` dashboard card is optional for browsing and exporting originals; it is no longer needed for approval.
 
 The [operations guide](docs/archive-operations.md) covers manual fallback, backup/restore, storage, export, deletion and rollback. Only one `health_bridge` integration can be installed. The HACS custom-repository switch was verified on Home Assistant Core 2026.9.3 with HACS 2.0.5 at fork commit `2355078`; release-tag upgrades, rollback through HACS, other installations, and phone-connected full-history import remain unverified. Review future fork updates before downloading them; do not reinstall the upstream repository over this fork.
 

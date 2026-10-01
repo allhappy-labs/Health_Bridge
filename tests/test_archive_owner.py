@@ -58,6 +58,28 @@ def approve(store, secret):
     return store.approve_owner("person-1", claim.claim_id, NOW)
 
 
+def test_pending_owner_claim_inventory_only_lists_live_claims(store):
+    first = store.claim_owner("person-1", SECRET_A, NOW)
+    store.claim_owner("person-2", SECRET_B, NOW - timedelta(days=2))
+
+    claims = store.list_pending_owner_claims(NOW)
+
+    assert [(item.user_id, item.claim.claim_id, item.claim.fingerprint,
+             item.owner_generation) for item in claims] == [
+        ("person-1", first.claim_id, first.fingerprint, 0)
+    ]
+
+
+def test_pending_owner_claim_inventory_marks_transfer(store):
+    approve(store, SECRET_A)
+    replacement = store.claim_owner("person-1", SECRET_B, NOW)
+
+    claims = store.list_pending_owner_claims(NOW)
+
+    assert [(item.user_id, item.claim.claim_id, item.owner_generation)
+            for item in claims] == [("person-1", replacement.claim_id, 1)]
+
+
 class OwnedStore:
     """Give legacy store tests an approved synthetic phone without changing their calls."""
 

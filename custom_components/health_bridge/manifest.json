@@ -8,5 +8,5 @@
   "dependencies": ["backup", "frontend", "http", "lovelace", "webhook"],
   "requirements": [],
   "iot_class": "cloud_push",
-  "version": "2.1.1a1"
+  "version": "2.1.1a2"
 }

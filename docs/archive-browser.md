@@ -1,6 +1,8 @@
 # Original-sample archive browser
 
-Add this dashboard card after installing the fork (its resource registers automatically):
+Optionally add this dashboard card to browse or export original samples after
+installing the fork (its resource registers automatically). Phone approval is
+available under Health Bridge's Configure menu without a dashboard:
 
 ```yaml
 type: custom:health-bridge-archive

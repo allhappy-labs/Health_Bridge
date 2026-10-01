@@ -26,7 +26,7 @@ def test_manifest_and_hacs_payload_are_complete():
     project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
     assert manifest["domain"] == "health_bridge"
     assert manifest["config_flow"] is True
-    assert manifest["version"] == project["version"] == "2.1.1a1"
+    assert manifest["version"] == project["version"] == "2.1.1a2"
     assert {"backup", "frontend", "http", "lovelace", "webhook"} <= set(manifest["dependencies"])
     assert manifest["requirements"] == []
     for name in (

@@ -11,7 +11,7 @@
       },
       "health_assistant_link": {
         "title": "Add Health Assistant Link",
-        "description": "Use the generated token in Health Assistant Link. Keep this token private and do not reuse it for Phone Assistant Link. The Health Bridge Archive dashboard card requires a Home Assistant administrator and the exact Health Bridge person ID. Archive deletion leaves recorder history, external statistics, backups, and exports intact.",
+        "description": "Use the generated token in Health Assistant Link. Keep this token private and do not reuse it for Phone Assistant Link. Approve archive uploader phones through this integration's Configure menu. The optional archive dashboard card requires a Home Assistant administrator and the exact Health Bridge person ID. Archive deletion leaves recorder history, external statistics, backups, and exports intact.",
         "data": {
           "token": "Security Token"
         }
@@ -35,8 +35,14 @@
   },
   "options": {
     "abort": {
+      "archive_unavailable": "Archive approval is available only on the Health Bridge entry when the archive is ready",
+      "claim_not_found": "This phone approval request is no longer pending. Refresh and try again",
       "device_not_found": "The selected device could not be found",
-      "no_devices": "No Health Bridge devices are available to delete"
+      "no_devices": "No Health Bridge devices are available to delete",
+      "no_pending_archive_claims": "No phone is waiting for archive approval. Request approval from the iPhone first"
+    },
+    "error": {
+      "fingerprint_mismatch": "This fingerprint does not match the pending phone request"
     },
     "step": {
       "init": {
@@ -45,12 +51,14 @@
         "menu_options": {
           "token": "Change secret token",
           "units": "Units",
-          "edit_delete": "Edit/Delete"
+          "edit_delete": "Edit/Delete",
+          "archive_approvals": "Archive uploader approvals"
         },
         "menu_option_descriptions": {
           "token": "Update the security token shared with Health Assistant Link and Phone Assistant Link.",
           "units": "Open the unit selectors for nutrition and water.",
-          "edit_delete": "Choose a Health Bridge device to delete."
+          "edit_delete": "Choose a Health Bridge device to delete.",
+          "archive_approvals": "Review a pending iPhone request to upload original Health data."
         }
       },
       "token": {
@@ -80,6 +88,21 @@
         "description": "Delete {device_name} and all of its Health Bridge entities?",
         "data": {
           "confirm": "Confirm delete"
+        }
+      },
+      "archive_approvals": {
+        "title": "Archive uploader approvals",
+        "description": "Select the Health Bridge user and pending phone request you want to review.",
+        "data": {
+          "claim_id": "Pending phone"
+        }
+      },
+      "archive_approval_confirm": {
+        "title": "Review archive uploader",
+        "description": "For {user_id}, compare the 12-character fingerprint shown on the intended iPhone with {fingerprint} below. Type that fingerprint to confirm your comparison. {transfer_warning} Never approve a request you do not recognize.",
+        "data": {
+          "fingerprint": "iPhone fingerprint",
+          "action": "Decision"
         }
       }
     }

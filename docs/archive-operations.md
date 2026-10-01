@@ -1,6 +1,6 @@
 # Archive fork operations
 
-This is the local `2.1.1a1` prerelease fork of upstream Health Bridge v2.1.0,
+This is the local `2.1.1a2` prerelease fork of upstream Health Bridge v2.1.0,
 commit `399c6aa3c7af32d0d2faa49ae71286695532c0cb`. The qualified minimum is
 **Home Assistant Core 2026.9.3 / Python 3.14.2**; verification uses Python 3.14.7.
 Earlier HA versions have not been qualified for the recorder/statistics APIs.
@@ -33,7 +33,7 @@ claimed to support it. Full-history iOS qualification remains a separate gate.
    package can own `custom_components/health_bridge`.
 3. Download the `allhappy-labs` fork in HACS, checking the commit displayed in
    the confirmation dialog. Restart HA. Existing HAL/PAL entries should load
-   without being recreated; verify version `2.1.1a1`, the fork documentation
+   without being recreated; verify version `2.1.1a2`, the fork documentation
    link, and their entities. Check the applicable HAL live and PAL ping routes,
    then query `archive_capability` over the
    existing `/api/webhook/health_bridge` route using the HAL token and intended
@@ -41,11 +41,14 @@ claimed to support it. Full-history iOS qualification remains a separate gate.
    1, protocol 2, 107 supported metrics from 99 source types, and both
    archive/statistics availability true when recorder is ready. PAL credentials
    cannot upload an archive.
-4. Add the `custom:health-bridge-archive` card using an administrator account;
-   the integration registers its JavaScript resource automatically. Claim the
-   user from the intended phone, compare its fingerprint with the pending
-   claim in the admin card, and explicitly approve it. Before approving a
-   replacement, back up HA; approval revokes the old phone's v2 access while
+4. From the intended iPhone, request archive approval. In Home Assistant,
+   open Settings → Devices & services → Health Bridge → Configure → Archive
+   uploader approvals as an administrator. Select the pending phone, compare
+   its fingerprint with the iPhone, type the matching fingerprint, and
+   explicitly approve it. The `custom:health-bridge-archive` dashboard card
+   remains optional for browsing and export; its resource registers
+   automatically. Before approving a replacement, back up HA; approval
+   revokes the old phone's v2 access while
    retaining old-only originals. Browse a small synthetic or explicitly chosen
    import before expanding scope. Keep
    `samples archived` distinct from `statistics current`.

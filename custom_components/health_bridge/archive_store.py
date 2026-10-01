@@ -58,6 +58,15 @@ class ArchiveStoreError(ValueError):
 
 
 @dataclass(frozen=True, slots=True)
+class PendingOwnerApproval:
+    """Non-secret claim details for an HA administrator's approval flow."""
+
+    user_id: str
+    claim: OwnerClaim
+    owner_generation: int
+
+
+@dataclass(frozen=True, slots=True)
 class ArchiveQuery:
     """Overlap query for one user/type and half-open UTC interval.
 
@@ -473,6 +482,32 @@ class ArchiveStore:
         return (
             OwnerClaim(row["claim_id"], row["credential_digest"][:12], _date(row["expires_at"]))
             if row else None
+        )
+
+    def list_pending_owner_claims(self, now: datetime) -> tuple[PendingOwnerApproval, ...]:
+        """Return unexpired claims without exposing uploader credentials."""
+        _executor_only()
+        with self._connection() as db:
+            rows = db.execute(
+                """SELECT claims.user_id, claims.claim_id, claims.credential_digest,
+                          claims.expires_at, COALESCE(owners.generation, 0) AS generation
+                   FROM archive_owner_claims AS claims
+                   LEFT JOIN archive_owners AS owners ON owners.user_id=claims.user_id
+                   WHERE claims.expires_at>?
+                   ORDER BY claims.user_id""",
+                (_instant(now),),
+            ).fetchall()
+        return tuple(
+            PendingOwnerApproval(
+                row["user_id"],
+                OwnerClaim(
+                    row["claim_id"],
+                    row["credential_digest"][:12],
+                    _date(row["expires_at"]),
+                ),
+                row["generation"],
+            )
+            for row in rows
         )
 
     def owner_status(

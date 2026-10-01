@@ -13,11 +13,12 @@ The archive stores authorized original quantity, category and workout samples se
 ## Install or upgrade
 
 1. Make and download a Home Assistant backup. Record the existing Health Bridge version, and test restore on a disposable instance before a large import.
-2. Stop Home Assistant. Save the current `custom_components/health_bridge` directory as a rollback copy, then install the **complete** directory from this repository at `<HA config>/custom_components/health_bridge`. Do not overlay a few files or recreate existing config entries or tokens.
-3. Start Home Assistant. Confirm existing Health Assistant Link and Phone Assistant Link entries still load and their live routes work. In HA Health Sync, Historical Import → Compatibility should report **Archive protocol 2 available**.
-4. Add the `custom:health-bridge-archive` dashboard card as an administrator. From the intended authoritative iPhone, request archive approval; compare the short fingerprint on the phone and card before approving. Import a small, explicitly selected range first.
+2. In HACS → ⋮ → **Custom repositories**, add `https://github.com/allhappy-labs/Health_Bridge` as an **Integration**.
+3. If HACS already downloaded `gregt1993/Health_Bridge`, remove that downloaded package first. HACS may warn that Health Bridge is configured: choose **Ignore** to keep the existing Home Assistant configuration entry; do **not** navigate to delete it. Remove the upstream custom-repository registration too, if present, so HACS tracks only this fork.
+4. Open the `allhappy-labs` Health Bridge entry in HACS and choose **Download**. Check the displayed commit before confirming. Restart Home Assistant; do not add a second Health Bridge configuration entry or replace existing tokens.
+5. Confirm the installed integration is version `2.1.1a1`, its documentation points to `allhappy-labs`, and existing entries and entities load. In HA Health Sync, Historical Import → Compatibility should report **Archive protocol 2 available**. Add the `custom:health-bridge-archive` dashboard card as an administrator, compare the phone's pending approval fingerprint, and import a small range first.
 
-The [operations guide](docs/archive-operations.md) covers upgrade checks, backup/restore, storage, export, deletion and rollback. Only one `health_bridge` integration can be installed. **Do not use the upstream HACS repository to install this archive feature** or let an upstream HACS update overwrite this directory. HACS distribution from this fork has not yet been validated; manual installation is the supported prerelease path.
+The [operations guide](docs/archive-operations.md) covers manual fallback, backup/restore, storage, export, deletion and rollback. Only one `health_bridge` integration can be installed. The HACS custom-repository switch was verified on Home Assistant Core 2026.9.3 with HACS 2.0.5 at fork commit `2355078`; release-tag upgrades, rollback through HACS, other installations, and phone-connected full-history import remain unverified. Review future fork updates before downloading them; do not reinstall the upstream repository over this fork.
 
 ## Data and privacy
 

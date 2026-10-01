@@ -24,13 +24,18 @@ claimed to support it. Full-history iOS qualification remains a separate gate.
 1. Make a Home Assistant backup and download a protected copy. Save the exact
    previously installed integration version. Test the restore on a disposable
    instance before a large import. Preserve existing config entries and tokens.
-2. Confirm HA is at least 2026.9.3. Stop HA while replacing integration files.
-   Install the complete `custom_components/health_bridge` directory from a
-   reviewed fork commit into the HA configuration directory. Do not overlay
-   individual Python files or copy the repository's virtual environment/tests.
-   Only one integration with this domain may be installed.
-3. Start HA. Both existing entries should load without being recreated. Check
-   their HAL live and PAL ping routes, then query `archive_capability` over the
+2. Confirm HA is at least 2026.9.3. In HACS → ⋮ → Custom repositories, add
+   `https://github.com/allhappy-labs/Health_Bridge` as an Integration. If the
+   upstream `gregt1993/Health_Bridge` package is downloaded, remove it from
+   HACS first. When HACS warns that the integration is configured, choose
+   **Ignore** rather than deleting its Home Assistant configuration entry.
+   Remove the upstream custom-repository registration if one exists. Only one
+   package can own `custom_components/health_bridge`.
+3. Download the `allhappy-labs` fork in HACS, checking the commit displayed in
+   the confirmation dialog. Restart HA. Existing HAL/PAL entries should load
+   without being recreated; verify version `2.1.1a1`, the fork documentation
+   link, and their entities. Check the applicable HAL live and PAL ping routes,
+   then query `archive_capability` over the
    existing `/api/webhook/health_bridge` route using the HAL token and intended
    phone's device-local uploader credential. Expect schema 3, ownership contract
    1, protocol 2, 107 supported metrics from 99 source types, and both
@@ -50,13 +55,21 @@ and [statistic semantics](archive-statistics.md).
 
 ### HACS prerelease boundary
 
-The repository has a standard HACS integration layout, but a HACS download and
-installation from the fork's GitHub URL has **not yet been validated**. Use the
-manual installation above for this prerelease. The original upstream HACS
-repository does **not** contain the archive feature; do not let its updates
-overwrite the fork. A future HACS release requires a verified public tag,
-custom-repository install test, and upgrade/rollback check on a disposable
-Home Assistant instance before it is documented as supported.
+The HACS 2.0.5 custom-repository switch above was exercised on a Home Assistant
+Core 2026.9.3 target on 2026-10-01: HACS downloaded fork commit `2355078`, HA
+restarted into version `2.1.1a1`, the existing HAL entry and 79 entities
+remained, and several entity values were readable. The upstream HACS package
+and custom-repository registration were removed. No fresh backup was created
+for that target at the owner's direction. This is one installation observation,
+not a verified HACS release, upgrade/rollback qualification, full-history phone
+import, or backup/restore proof. Review future fork commits before downloading
+them. The original upstream repository does **not** contain the archive feature.
+
+For a manual fallback, stop HA, preserve the existing complete
+`custom_components/health_bridge` directory for rollback, then replace it with
+the complete directory from a reviewed fork commit. Do not overlay individual
+Python files or copy the repository's virtual environment/tests. Ensure HACS
+does not still track an upstream package that could replace these files.
 
 ## Storage, growth, and retention
 

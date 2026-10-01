@@ -3,6 +3,7 @@
 from datetime import datetime, timezone
 
 from homeassistant.data_entry_flow import FlowResultType
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 
 NOW = datetime.now(timezone.utc)
@@ -135,3 +136,33 @@ async def test_configure_rejects_pending_claim_without_changing_owner(
     )
     assert empty["type"] == FlowResultType.ABORT
     assert empty["reason"] == "no_pending_archive_claims"
+
+
+async def test_legacy_hal_entry_without_app_type_can_approve(
+    hass, enable_custom_integrations
+):
+    entry = MockConfigEntry(
+        domain="health_bridge",
+        data={"token": "legacy-health-assistant-token-00000001"},
+        unique_id="legacy-health-assistant-token-00000001",
+        title="Health Bridge",
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    store = hass.data["health_bridge"]["archive_store"]
+    claim = await hass.async_add_executor_job(
+        store.claim_owner, "olhapi", PHONE_A, NOW
+    )
+
+    picker = await _start_approval_flow(hass, entry)
+    confirm = await hass.config_entries.options.async_configure(
+        picker["flow_id"], {"claim_id": claim.claim_id}
+    )
+    result = await hass.config_entries.options.async_configure(
+        confirm["flow_id"], {"fingerprint": claim.fingerprint, "action": "approve"}
+    )
+
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert (
+        await hass.async_add_executor_job(store.owner_status, "olhapi", PHONE_A, NOW)
+    ).state == "active"

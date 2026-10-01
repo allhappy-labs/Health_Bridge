@@ -182,7 +182,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
     async def async_step_init(self, user_input: dict | None = None) -> FlowResult:
         menu_options = ["units", "edit_delete"]
-        if self.config_entry.data.get(CONF_APP_TYPE) == APP_TYPE_HEALTH_ASSISTANT_LINK:
+        if self.config_entry.data.get(CONF_APP_TYPE, APP_TYPE_HEALTH_ASSISTANT_LINK) == APP_TYPE_HEALTH_ASSISTANT_LINK:
             menu_options.append("archive_approvals")
         return self.async_show_menu(
             step_id="init",
@@ -193,7 +193,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         self, user_input: dict | None = None
     ) -> FlowResult:
         """Let an administrator select one pending Health Bridge phone claim."""
-        if self.config_entry.data.get(CONF_APP_TYPE) != APP_TYPE_HEALTH_ASSISTANT_LINK:
+        if self.config_entry.data.get(CONF_APP_TYPE, APP_TYPE_HEALTH_ASSISTANT_LINK) != APP_TYPE_HEALTH_ASSISTANT_LINK:
             return self.async_abort(reason="archive_unavailable")
         store = self.hass.data.get(DOMAIN, {}).get("archive_store")
         if store is None:
@@ -233,7 +233,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         self, user_input: dict | None = None
     ) -> FlowResult:
         """Require the matching iPhone fingerprint before changing ownership."""
-        if self.config_entry.data.get(CONF_APP_TYPE) != APP_TYPE_HEALTH_ASSISTANT_LINK:
+        if self.config_entry.data.get(CONF_APP_TYPE, APP_TYPE_HEALTH_ASSISTANT_LINK) != APP_TYPE_HEALTH_ASSISTANT_LINK:
             return self.async_abort(reason="archive_unavailable")
         store = self.hass.data.get(DOMAIN, {}).get("archive_store")
         if store is None or self._approval_user_id is None or self._approval_claim_id is None:
